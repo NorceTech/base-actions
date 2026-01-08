@@ -1,0 +1,141 @@
+name: 'Base Deploy'
+description: 'Deploy to Norce Base Platform'
+author: 'NorceTech'
+
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  partner:
+    description: 'Partner name on Base platform'
+    required: true
+  environment:
+    description: 'Target environment (stage, prod, dev, qa, etc.)'
+    required: true
+  image_tag:
+    description: 'Image tag to deploy'
+    required: true
+  customer:
+    description: 'Customer name (defaults to repository name)'
+    required: false
+  config_file:
+    description: 'Path to config file'
+    required: false
+    default: '.base/config.yaml'
+  api_url:
+    description: 'Base Platform API URL'
+    required: false
+    default: 'https://api.base.norce.tech'
+  token:
+    description: 'Base Platform authentication token'
+    required: true
+
+outputs:
+  success:
+    description: 'Whether the deployment was successful'
+    value: ${{ steps.deploy.outputs.success }}
+  namespace:
+    description: 'Kubernetes namespace'
+    value: ${{ steps.deploy.outputs.namespace }}
+  git_commit_sha:
+    description: 'Git commit SHA in GitOps repo'
+    value: ${{ steps.deploy.outputs.git_commit_sha }}
+  previous_image_tag:
+    description: 'Previous image tag'
+    value: ${{ steps.deploy.outputs.previous_image_tag }}
+  message:
+    description: 'Deployment message'
+    value: ${{ steps.deploy.outputs.message }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Read configuration
+      id: config
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config_file }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        if [ -f "$CONFIG_FILE" ]; then
+          echo "Found config file: $CONFIG_FILE"
+          if command -v yq &> /dev/null; then
+            ENV_CONFIG=$(yq -o=json ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+          else
+            # Fallback: try to parse with python if yq not available
+            ENV_CONFIG=$(python3 -c "
+        import yaml, json, sys
+        with open('$CONFIG_FILE') as f:
+            data = yaml.safe_load(f)
+            env_config = data.get('environments', {}).get('$ENVIRONMENT', {})
+            print(json.dumps(env_config))
+        " 2>/dev/null || echo "{}")
+          fi
+          echo "config=$ENV_CONFIG" >> $GITHUB_OUTPUT
+        else
+          echo "No config file found, using defaults"
+          echo "config={}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Deploy to Base Platform
+      id: deploy
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        TOKEN: ${{ inputs.token }}
+        PARTNER: ${{ inputs.partner }}
+        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        COMMIT_SHA: ${{ github.sha }}
+        CONFIG: ${{ steps.config.outputs.config }}
+      run: |
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/webhooks/deploy" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n \
+            --arg action "deploy" \
+            --arg partner "$PARTNER" \
+            --arg customer "$CUSTOMER" \
+            --arg environment "$ENVIRONMENT" \
+            --arg image_tag "$IMAGE_TAG" \
+            --arg commit_sha "$COMMIT_SHA" \
+            --argjson config "${CONFIG:-{}}" \
+            '{
+              action: $action,
+              partner: $partner,
+              customer: $customer,
+              environment: $environment,
+              image_tag: $image_tag,
+              commit_sha: $commit_sha,
+              config: $config
+            }')")
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        echo "Response: $HTTP_CODE"
+
+        if [ "$HTTP_CODE" -ne 200 ]; then
+          echo "::error::Deployment failed"
+          echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+          echo "success=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        # Parse response
+        SUCCESS=$(echo "$BODY" | jq -r '.data.success // false')
+        NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
+        GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')
+        PREV_TAG=$(echo "$BODY" | jq -r '.data.previousImageTag // empty')
+        MESSAGE=$(echo "$BODY" | jq -r '.data.message // empty')
+
+        echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
+        echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
+        echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+
+        echo "Deployed ${IMAGE_TAG} to ${ENVIRONMENT}"
+        echo "$MESSAGE"

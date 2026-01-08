@@ -1,0 +1,111 @@
+name: 'Base Promote'
+description: 'Promote deployment from one environment to another on Norce Base Platform'
+author: 'NorceTech'
+
+branding:
+  icon: 'arrow-up-circle'
+  color: 'green'
+
+inputs:
+  partner:
+    description: 'Partner name on Base platform'
+    required: true
+  customer:
+    description: 'Customer name (defaults to repository name)'
+    required: false
+  from_environment:
+    description: 'Source environment to promote from'
+    required: true
+  to_environment:
+    description: 'Target environment to promote to'
+    required: true
+  api_url:
+    description: 'Base Platform API URL'
+    required: false
+    default: 'https://api.base.norce.tech'
+  token:
+    description: 'Base Platform authentication token'
+    required: true
+
+outputs:
+  success:
+    description: 'Whether the promotion was successful'
+    value: ${{ steps.promote.outputs.success }}
+  namespace:
+    description: 'Kubernetes namespace'
+    value: ${{ steps.promote.outputs.namespace }}
+  git_commit_sha:
+    description: 'Git commit SHA in GitOps repo'
+    value: ${{ steps.promote.outputs.git_commit_sha }}
+  previous_image_tag:
+    description: 'Previous image tag in target environment'
+    value: ${{ steps.promote.outputs.previous_image_tag }}
+  new_image_tag:
+    description: 'New image tag (from source environment)'
+    value: ${{ steps.promote.outputs.new_image_tag }}
+  message:
+    description: 'Promotion message'
+    value: ${{ steps.promote.outputs.message }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Promote Deployment
+      id: promote
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        TOKEN: ${{ inputs.token }}
+        PARTNER: ${{ inputs.partner }}
+        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        FROM_ENV: ${{ inputs.from_environment }}
+        TO_ENV: ${{ inputs.to_environment }}
+      run: |
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/webhooks/deploy" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n \
+            --arg action "promote" \
+            --arg partner "$PARTNER" \
+            --arg customer "$CUSTOMER" \
+            --arg from_environment "$FROM_ENV" \
+            --arg environment "$TO_ENV" \
+            --arg image_tag "ignored" \
+            '{
+              action: $action,
+              partner: $partner,
+              customer: $customer,
+              from_environment: $from_environment,
+              environment: $environment,
+              image_tag: $image_tag
+            }')")
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        echo "Response: $HTTP_CODE"
+
+        if [ "$HTTP_CODE" -ne 200 ]; then
+          echo "::error::Promotion failed"
+          echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+          echo "success=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        # Parse response
+        SUCCESS=$(echo "$BODY" | jq -r '.data.success // false')
+        NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
+        GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')
+        PREV_TAG=$(echo "$BODY" | jq -r '.data.previousImageTag // empty')
+        NEW_TAG=$(echo "$BODY" | jq -r '.data.newImageTag // empty')
+        MESSAGE=$(echo "$BODY" | jq -r '.data.message // empty')
+
+        echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
+        echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
+        echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+        echo "new_image_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+
+        echo "Promoted $NEW_TAG from $FROM_ENV to $TO_ENV"
+        echo "$MESSAGE"
