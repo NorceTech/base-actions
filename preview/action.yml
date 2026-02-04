@@ -23,7 +23,7 @@ inputs:
   api_url:
     description: 'Base Platform API URL'
     required: false
-    default: 'https://api.base.norce.tech'
+    default: 'https://base-portal.norce.tech'
   api_key:
     description: 'Base Platform API key (identifies partner)'
     required: true
