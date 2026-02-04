@@ -27,11 +27,19 @@ inputs:
   api_key:
     description: 'Base Platform API key (identifies partner)'
     required: true
+  wait_for_healthy:
+    description: 'Wait for deployment to become healthy (true/false)'
+    required: false
+    default: 'true'
+  wait_timeout:
+    description: 'Timeout in seconds when waiting for healthy status'
+    required: false
+    default: '300'
 
 outputs:
   success:
     description: 'Whether the deployment was successful'
-    value: ${{ steps.deploy.outputs.success }}
+    value: ${{ steps.final-status.outputs.success }}
   namespace:
     description: 'Kubernetes namespace'
     value: ${{ steps.deploy.outputs.namespace }}
@@ -43,7 +51,13 @@ outputs:
     value: ${{ steps.deploy.outputs.previous_image_tag }}
   message:
     description: 'Deployment message'
-    value: ${{ steps.deploy.outputs.message }}
+    value: ${{ steps.final-status.outputs.message }}
+  health_status:
+    description: 'Final health status (Healthy, Progressing, Degraded, etc.)'
+    value: ${{ steps.wait-healthy.outputs.health_status }}
+  sync_status:
+    description: 'Final sync status (Synced, OutOfSync, etc.)'
+    value: ${{ steps.wait-healthy.outputs.sync_status }}
 
 runs:
   using: 'composite'
@@ -122,6 +136,7 @@ runs:
           echo "::error::Deployment failed"
           echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
           echo "success=false" >> $GITHUB_OUTPUT
+          echo "deploy_success=false" >> $GITHUB_OUTPUT
           exit 1
         fi
 
@@ -132,10 +147,128 @@ runs:
         MESSAGE=$(echo "$BODY" | jq -r '.data.message // empty')
 
         echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "deploy_success=$SUCCESS" >> $GITHUB_OUTPUT
         echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
         echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
         echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
         echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
-        echo "Deployed ${IMAGE_TAG} to ${ENVIRONMENT}"
+        echo "✓ GitOps repo updated: ${IMAGE_TAG} → ${ENVIRONMENT}"
         echo "$MESSAGE"
+
+    - name: Wait for healthy deployment
+      id: wait-healthy
+      if: ${{ inputs.wait_for_healthy == 'true' && steps.deploy.outputs.deploy_success == 'true' }}
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        API_KEY: ${{ inputs.api_key }}
+        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        TIMEOUT: ${{ inputs.wait_timeout }}
+      run: |
+        echo "⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}s)..."
+
+        START_TIME=$(date +%s)
+        POLL_INTERVAL=10
+        LAST_STATUS=""
+
+        while true; do
+          CURRENT_TIME=$(date +%s)
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "::error::Timeout waiting for deployment to become healthy after ${TIMEOUT}s"
+            echo "health_status=Timeout" >> $GITHUB_OUTPUT
+            echo "sync_status=Unknown" >> $GITHUB_OUTPUT
+            echo "healthy=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Get deployment status via public deploy/status endpoint
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            "${API_URL}/api/v1/deploy/status?customer=${CUSTOMER}&environment=${ENVIRONMENT}" \
+            -H "Authorization: Bearer ${API_KEY}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "  Warning: Failed to get deployment status (HTTP $HTTP_CODE), retrying..."
+            sleep $POLL_INTERVAL
+            continue
+          fi
+
+          # Parse status from response (single object, not array)
+          HEALTH=$(echo "$BODY" | jq -r '.data.healthStatus // "Unknown"')
+          SYNC=$(echo "$BODY" | jq -r '.data.syncStatus // "Unknown"')
+          CURRENT_TAG=$(echo "$BODY" | jq -r '.data.imageTag // "unknown"')
+
+          STATUS_LINE="  [${ELAPSED}s] Health: ${HEALTH}, Sync: ${SYNC}, Tag: ${CURRENT_TAG}"
+
+          # Only print if status changed
+          if [ "$STATUS_LINE" != "$LAST_STATUS" ]; then
+            echo "$STATUS_LINE"
+            LAST_STATUS="$STATUS_LINE"
+          fi
+
+          # Check if deployment is healthy with correct image
+          if [ "$HEALTH" == "Healthy" ] && [ "$SYNC" == "Synced" ]; then
+            if [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
+              echo ""
+              echo "✅ Deployment healthy!"
+              echo "   Health: $HEALTH"
+              echo "   Sync: $SYNC"
+              echo "   Image: $CURRENT_TAG"
+              echo "   Time: ${ELAPSED}s"
+
+              echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
+              echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
+              echo "healthy=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # Check for degraded/failed state
+          if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
+            echo ""
+            echo "::error::Deployment failed - Health: $HEALTH"
+            echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
+            echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
+            echo "healthy=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          sleep $POLL_INTERVAL
+        done
+
+    - name: Set final status
+      id: final-status
+      if: always()
+      shell: bash
+      env:
+        DEPLOY_SUCCESS: ${{ steps.deploy.outputs.deploy_success }}
+        WAIT_ENABLED: ${{ inputs.wait_for_healthy }}
+        HEALTHY: ${{ steps.wait-healthy.outputs.healthy }}
+        HEALTH_STATUS: ${{ steps.wait-healthy.outputs.health_status }}
+        DEPLOY_MESSAGE: ${{ steps.deploy.outputs.message }}
+      run: |
+        if [ "$DEPLOY_SUCCESS" != "true" ]; then
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "message=Deployment failed to update GitOps repo" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        if [ "$WAIT_ENABLED" == "true" ]; then
+          if [ "$HEALTHY" == "true" ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "message=Deployment complete and healthy" >> $GITHUB_OUTPUT
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "message=Deployment failed - Health: ${HEALTH_STATUS:-Unknown}" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "message=$DEPLOY_MESSAGE" >> $GITHUB_OUTPUT
+        fi

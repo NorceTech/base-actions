@@ -173,14 +173,18 @@ environments:
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
+| `wait_for_healthy` | No | `true` | Wait for deployment to become healthy |
+| `wait_timeout` | No | `300` | Timeout in seconds when waiting for healthy status |
 
 | Output | Description |
 |--------|-------------|
-| `success` | Whether deployment succeeded |
+| `success` | Whether deployment succeeded (includes health check if enabled) |
 | `namespace` | Kubernetes namespace |
 | `git_commit_sha` | Commit SHA in GitOps repo |
 | `previous_image_tag` | Previous image tag |
 | `message` | Result message |
+| `health_status` | Final health status (Healthy, Progressing, Degraded, Timeout) |
+| `sync_status` | Final sync status (Synced, OutOfSync, etc.) |
 
 ### `preview`
 
@@ -227,8 +231,52 @@ environments:
 3. Action calls the Base Platform API (partner identified by API key)
 4. Base Platform commits changes to your GitOps repository
 5. ArgoCD syncs the changes to your cluster
+6. Action polls for deployment health status (if `wait_for_healthy: true`)
 
 All deployments follow GitOps principles - changes go through Git, ArgoCD syncs from Git.
+
+## Health Status Polling
+
+By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status, not just the GitOps commit.
+
+**What it checks:**
+- ArgoCD health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
+- ArgoCD sync status: `Synced`, `OutOfSync`
+- Image tag matches the deployed tag
+
+**Example output:**
+```
+⏳ Waiting for deployment to become healthy (timeout: 300s)...
+  [10s] Health: Progressing, Sync: Synced, Tag: main-bc5059
+  [20s] Health: Progressing, Sync: Synced, Tag: main-bc5059
+  [35s] Health: Healthy, Sync: Synced, Tag: main-bc5059
+
+✅ Deployment healthy!
+   Health: Healthy
+   Sync: Synced
+   Image: main-bc5059
+   Time: 35s
+```
+
+**Disable health polling** (not recommended):
+```yaml
+- uses: NorceTech/base-actions/deploy@v2
+  with:
+    environment: stage
+    image_tag: ${{ steps.tag.outputs.tag }}
+    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+    wait_for_healthy: 'false'
+```
+
+**Adjust timeout:**
+```yaml
+- uses: NorceTech/base-actions/deploy@v2
+  with:
+    environment: prod
+    image_tag: ${{ steps.tag.outputs.tag }}
+    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+    wait_timeout: '600'  # 10 minutes for larger deployments
+```
 
 ## API Endpoints
 
@@ -236,9 +284,10 @@ The actions call the following endpoints:
 
 | Action | Endpoint |
 |--------|----------|
-| `deploy` | `POST /v1/deploy` |
-| `preview` | `POST /v1/preview` |
-| `promote` | `POST /v1/deploy` (with action=promote) |
+| `deploy` | `POST /api/v1/deploy` |
+| `deploy` (status polling) | `GET /api/v1/deploy/status` |
+| `preview` | `POST /api/v1/preview` |
+| `promote` | `POST /api/v1/deploy` (with action=promote) |
 
 ## Direct GitOps Access
 
