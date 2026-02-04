@@ -57,7 +57,7 @@ runs:
         FROM_ENV: ${{ inputs.from_environment }}
         TO_ENV: ${{ inputs.to_environment }}
       run: |
-        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/v1/deploy" \
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
           -H "Authorization: Bearer ${API_KEY}" \
           -H "Content-Type: application/json" \
           -d "$(jq -n \
