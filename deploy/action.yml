@@ -86,24 +86,32 @@ runs:
         COMMIT_SHA: ${{ github.sha }}
         CONFIG: ${{ steps.config.outputs.config }}
       run: |
+        # Build JSON body without config first
+        BODY=$(jq -n \
+          --arg action "deploy" \
+          --arg customer "$CUSTOMER" \
+          --arg environment "$ENVIRONMENT" \
+          --arg image_tag "$IMAGE_TAG" \
+          --arg commit_sha "$COMMIT_SHA" \
+          '{
+            action: $action,
+            customer: $customer,
+            environment: $environment,
+            image_tag: $image_tag,
+            commit_sha: $commit_sha
+          }')
+
+        # Add config if present and valid
+        if [ -n "$CONFIG" ] && [ "$CONFIG" != "{}" ]; then
+          BODY=$(echo "$BODY" | jq --argjson config "$CONFIG" '. + {config: $config}' 2>/dev/null || echo "$BODY")
+        fi
+
+        echo "Request body: $BODY"
+
         RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
           -H "Authorization: Bearer ${API_KEY}" \
           -H "Content-Type: application/json" \
-          -d "$(jq -n \
-            --arg action "deploy" \
-            --arg customer "$CUSTOMER" \
-            --arg environment "$ENVIRONMENT" \
-            --arg image_tag "$IMAGE_TAG" \
-            --arg commit_sha "$COMMIT_SHA" \
-            --argjson config "${CONFIG:-{}}" \
-            '{
-              action: $action,
-              customer: $customer,
-              environment: $environment,
-              image_tag: $image_tag,
-              commit_sha: $commit_sha,
-              config: $config
-            }')")
+          -d "$BODY")
 
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
