@@ -12,8 +12,10 @@ Official GitHub Actions for deploying to the Norce Base Platform.
 
 ## Setup
 
-1. Get your partner webhook token from NorceTech
-2. Add it as a repository secret: `BASE_PLATFORM_TOKEN`
+1. Get your partner API key from NorceTech (or generate via Base Portal)
+2. Add it as a repository secret: `BASE_PLATFORM_API_KEY`
+
+The API key identifies your partner - no need to pass partner name in your workflows.
 
 ## Usage Examples
 
@@ -46,12 +48,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/deploy@v1
+      - uses: NorceTech/base-actions/deploy@v2
         with:
-          partner: your-partner-name
           environment: stage
           image_tag: ${{ needs.build.outputs.image_tag }}
-          token: ${{ secrets.BASE_PLATFORM_TOKEN }}
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 
   deploy-prod:
     needs: deploy-stage
@@ -61,12 +62,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/deploy@v1
+      - uses: NorceTech/base-actions/deploy@v2
         with:
-          partner: your-partner-name
           environment: prod
           image_tag: ${{ needs.build.outputs.image_tag }}
-          token: ${{ secrets.BASE_PLATFORM_TOKEN }}
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
 ### PR Preview Environments
@@ -101,12 +101,11 @@ jobs:
         if: github.event.action != 'closed'
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/preview@v1
+      - uses: NorceTech/base-actions/preview@v2
         with:
-          partner: your-partner-name
           action: ${{ github.event.action == 'closed' && 'delete' || (github.event.action == 'opened' && 'create' || 'update') }}
           image_tag: ${{ needs.build.outputs.image_tag }}
-          token: ${{ secrets.BASE_PLATFORM_TOKEN }}
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
 ### Promote Stage to Prod
@@ -122,12 +121,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: NorceTech/base-actions/promote@v1
+      - uses: NorceTech/base-actions/promote@v2
         with:
-          partner: your-partner-name
           from_environment: stage
           to_environment: prod
-          token: ${{ secrets.BASE_PLATFORM_TOKEN }}
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
 ## Configuration
@@ -169,13 +167,12 @@ environments:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `partner` | Yes | - | Partner name on Base platform |
 | `environment` | Yes | - | Target environment (stage, prod, etc.) |
 | `image_tag` | Yes | - | Image tag to deploy |
 | `customer` | No | repo name | Customer name |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `api_url` | No | `https://api.base.norce.tech` | Base API URL |
-| `token` | Yes | - | Authentication token |
+| `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
 |--------|-------------|
@@ -189,13 +186,12 @@ environments:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `partner` | Yes | - | Partner name on Base platform |
 | `action` | Yes | - | Action: create, update, delete |
 | `image_tag` | No | - | Image tag (not needed for delete) |
 | `customer` | No | repo name | Customer name |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `api_url` | No | `https://api.base.norce.tech` | Base API URL |
-| `token` | Yes | - | Authentication token |
+| `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
 |--------|-------------|
@@ -209,12 +205,11 @@ environments:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `partner` | Yes | - | Partner name on Base platform |
 | `from_environment` | Yes | - | Source environment |
 | `to_environment` | Yes | - | Target environment |
 | `customer` | No | repo name | Customer name |
 | `api_url` | No | `https://api.base.norce.tech` | Base API URL |
-| `token` | Yes | - | Authentication token |
+| `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
 |--------|-------------|
@@ -229,11 +224,21 @@ environments:
 
 1. Your workflow calls the action with deployment parameters
 2. Action reads config from `.base/config.yaml` (if present)
-3. Action calls the Base Platform API
+3. Action calls the Base Platform API (partner identified by API key)
 4. Base Platform commits changes to your GitOps repository
 5. ArgoCD syncs the changes to your cluster
 
 All deployments follow GitOps principles - changes go through Git, ArgoCD syncs from Git.
+
+## API Endpoints
+
+The actions call the following endpoints:
+
+| Action | Endpoint |
+|--------|----------|
+| `deploy` | `POST /v1/deploy` |
+| `preview` | `POST /v1/preview` |
+| `promote` | `POST /v1/deploy` (with action=promote) |
 
 ## Direct GitOps Access
 

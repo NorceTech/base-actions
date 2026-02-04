@@ -7,9 +7,6 @@ branding:
   color: 'blue'
 
 inputs:
-  partner:
-    description: 'Partner name on Base platform'
-    required: true
   environment:
     description: 'Target environment (stage, prod, dev, qa, etc.)'
     required: true
@@ -27,8 +24,8 @@ inputs:
     description: 'Base Platform API URL'
     required: false
     default: 'https://api.base.norce.tech'
-  token:
-    description: 'Base Platform authentication token'
+  api_key:
+    description: 'Base Platform API key (identifies partner)'
     required: true
 
 outputs:
@@ -63,7 +60,6 @@ runs:
           if command -v yq &> /dev/null; then
             ENV_CONFIG=$(yq -o=json ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
           else
-            # Fallback: try to parse with python if yq not available
             ENV_CONFIG=$(python3 -c "
         import yaml, json, sys
         with open('$CONFIG_FILE') as f:
@@ -83,20 +79,18 @@ runs:
       shell: bash
       env:
         API_URL: ${{ inputs.api_url }}
-        TOKEN: ${{ inputs.token }}
-        PARTNER: ${{ inputs.partner }}
+        API_KEY: ${{ inputs.api_key }}
         CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         COMMIT_SHA: ${{ github.sha }}
         CONFIG: ${{ steps.config.outputs.config }}
       run: |
-        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/webhooks/deploy" \
-          -H "Authorization: Bearer ${TOKEN}" \
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/v1/deploy" \
+          -H "Authorization: Bearer ${API_KEY}" \
           -H "Content-Type: application/json" \
           -d "$(jq -n \
             --arg action "deploy" \
-            --arg partner "$PARTNER" \
             --arg customer "$CUSTOMER" \
             --arg environment "$ENVIRONMENT" \
             --arg image_tag "$IMAGE_TAG" \
@@ -104,7 +98,6 @@ runs:
             --argjson config "${CONFIG:-{}}" \
             '{
               action: $action,
-              partner: $partner,
               customer: $customer,
               environment: $environment,
               image_tag: $image_tag,
@@ -124,7 +117,6 @@ runs:
           exit 1
         fi
 
-        # Parse response
         SUCCESS=$(echo "$BODY" | jq -r '.data.success // false')
         NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
         GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')

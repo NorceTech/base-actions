@@ -7,9 +7,6 @@ branding:
   color: 'green'
 
 inputs:
-  partner:
-    description: 'Partner name on Base platform'
-    required: true
   customer:
     description: 'Customer name (defaults to repository name)'
     required: false
@@ -23,8 +20,8 @@ inputs:
     description: 'Base Platform API URL'
     required: false
     default: 'https://api.base.norce.tech'
-  token:
-    description: 'Base Platform authentication token'
+  api_key:
+    description: 'Base Platform API key (identifies partner)'
     required: true
 
 outputs:
@@ -55,25 +52,22 @@ runs:
       shell: bash
       env:
         API_URL: ${{ inputs.api_url }}
-        TOKEN: ${{ inputs.token }}
-        PARTNER: ${{ inputs.partner }}
+        API_KEY: ${{ inputs.api_key }}
         CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
         FROM_ENV: ${{ inputs.from_environment }}
         TO_ENV: ${{ inputs.to_environment }}
       run: |
-        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/webhooks/deploy" \
-          -H "Authorization: Bearer ${TOKEN}" \
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/v1/deploy" \
+          -H "Authorization: Bearer ${API_KEY}" \
           -H "Content-Type: application/json" \
           -d "$(jq -n \
             --arg action "promote" \
-            --arg partner "$PARTNER" \
             --arg customer "$CUSTOMER" \
             --arg from_environment "$FROM_ENV" \
             --arg environment "$TO_ENV" \
             --arg image_tag "ignored" \
             '{
               action: $action,
-              partner: $partner,
               customer: $customer,
               from_environment: $from_environment,
               environment: $environment,
@@ -92,7 +86,6 @@ runs:
           exit 1
         fi
 
-        # Parse response
         SUCCESS=$(echo "$BODY" | jq -r '.data.success // false')
         NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
         GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')
