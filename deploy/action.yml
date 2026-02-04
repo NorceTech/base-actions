@@ -58,14 +58,14 @@ runs:
         if [ -f "$CONFIG_FILE" ]; then
           echo "Found config file: $CONFIG_FILE"
           if command -v yq &> /dev/null; then
-            ENV_CONFIG=$(yq -o=json ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+            ENV_CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
           else
             ENV_CONFIG=$(python3 -c "
         import yaml, json, sys
         with open('$CONFIG_FILE') as f:
             data = yaml.safe_load(f)
             env_config = data.get('environments', {}).get('$ENVIRONMENT', {})
-            print(json.dumps(env_config))
+            print(json.dumps(env_config, separators=(',', ':')))
         " 2>/dev/null || echo "{}")
           fi
           echo "config=$ENV_CONFIG" >> $GITHUB_OUTPUT
