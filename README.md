@@ -171,7 +171,7 @@ environments:
 | `image_tag` | Yes | - | Image tag to deploy |
 | `customer` | No | repo name | Customer name |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
-| `api_url` | No | `https://api.base.norce.tech` | Base API URL |
+| `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
@@ -190,7 +190,7 @@ environments:
 | `image_tag` | No | - | Image tag (not needed for delete) |
 | `customer` | No | repo name | Customer name |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
-| `api_url` | No | `https://api.base.norce.tech` | Base API URL |
+| `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
@@ -208,7 +208,7 @@ environments:
 | `from_environment` | Yes | - | Source environment |
 | `to_environment` | Yes | - | Target environment |
 | `customer` | No | repo name | Customer name |
-| `api_url` | No | `https://api.base.norce.tech` | Base API URL |
+| `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 
 | Output | Description |
