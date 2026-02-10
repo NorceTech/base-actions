@@ -2,9 +2,13 @@
 set -euo pipefail
 
 # Read environment config from YAML
+CONFIG="{}"
+GLOBAL_ENV="[]"
+
 if [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
     CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+    GLOBAL_ENV=$(yq -o=json -I=0 ".environments.global.env // []" "$CONFIG_FILE")
   else
     CONFIG=$(python3 -c "
 import yaml, json, os, sys
@@ -13,9 +17,22 @@ with open(os.environ['CONFIG_FILE']) as f:
     env_config = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {})
     print(json.dumps(env_config, separators=(',', ':')))
 " 2>/dev/null || echo "{}")
+    GLOBAL_ENV=$(python3 -c "
+import yaml, json, os, sys
+with open(os.environ['CONFIG_FILE']) as f:
+    data = yaml.safe_load(f)
+    global_env = data.get('environments', {}).get('global', {}).get('env', [])
+    print(json.dumps(global_env, separators=(',', ':')))
+" 2>/dev/null || echo "[]")
   fi
-else
-  CONFIG="{}"
+fi
+
+# Merge global env vars into config (env-specific overrides global on name conflict)
+if [ "$GLOBAL_ENV" != "[]" ]; then
+  ENV_SPECIFIC_ENV=$(echo "$CONFIG" | jq '.env // []')
+  MERGED_ENV=$(jq -n --argjson global "$GLOBAL_ENV" --argjson specific "$ENV_SPECIFIC_ENV" \
+    '($global + $specific) | group_by(.name) | map(last)')
+  CONFIG=$(echo "$CONFIG" | jq --argjson merged "$MERGED_ENV" '.env = $merged')
 fi
 
 BODY=$(jq -n \
@@ -34,6 +51,11 @@ BODY=$(jq -n \
 
 if [ -n "$CONFIG" ] && [ "$CONFIG" != "{}" ]; then
   BODY=$(echo "$BODY" | jq --argjson config "$CONFIG" '. + {config: $config}' 2>/dev/null || echo "$BODY")
+fi
+
+# Send global env vars separately so the backend can save them under environment="all"
+if [ "$GLOBAL_ENV" != "[]" ]; then
+  BODY=$(echo "$BODY" | jq --argjson global_env "$GLOBAL_ENV" '. + {global_env: $global_env}')
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \

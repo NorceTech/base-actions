@@ -131,18 +131,18 @@ jobs:
 
 ### Sync Secrets
 
-Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same per-environment structure as `config.yaml`.
+Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same `environments.global` / `environments.<env>` structure as `config.yaml`.
 
 1. Create `.base/secrets.yaml` with secret mappings:
 
 ```yaml
-# Global secrets — synced to all environments
-secrets:
-  - github: SHARED_API_KEY
-    keyvault: shared-api-key
-
-# Per-environment secrets
 environments:
+  # Global secrets — synced to all environments
+  global:
+    - github: SHARED_API_KEY
+      keyvault: shared-api-key
+
+  # Per-environment secrets
   stage:
     - github: DATABASE_PASSWORD_STAGE
       keyvault: database-password
@@ -158,9 +158,10 @@ environments:
       keyvault: stripe-secret-key
 ```
 
-- **Global secrets** (`secrets:`) are stored as `customer-shared-api-key` (no env prefix)
-- **Per-environment secrets** (`environments:`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
-- You can use both `secrets:` and `environments:` together, or either one alone
+- **Global secrets** (`environments.global`) are stored as `customer-shared-api-key` (no env prefix)
+- **Per-environment secrets** (`environments.<env>`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
+- Global secrets always sync, even when targeting a specific environment
+- Legacy format: a top-level `secrets:` key is also supported as an alias for `environments.global`
 
 2. Pass the actual secret values as `env:` variables in your workflow:
 
@@ -226,10 +227,19 @@ Each `env:` name must match a `github` field in the mapping file. Secrets not fo
 
 ## Configuration
 
-Create `.base/config.yaml` in your repository for environment-specific settings:
+Create `.base/config.yaml` in your repository. Use `environments.global` for env vars shared across all environments, and per-environment sections for environment-specific settings:
 
 ```yaml
 environments:
+  # Global env vars — applied to all environments
+  global:
+    env:
+      - name: PORT
+        value: '3000'
+      - name: HOSTNAME
+        value: '0.0.0.0'
+
+  # Per-environment config
   preview:
     replicas: 1
     resources:
@@ -243,6 +253,9 @@ environments:
       limits:
         cpu: 250m
         memory: 256Mi
+    env:
+      - name: LOG_LEVEL
+        value: debug
 
   prod:
     replicas: 3
@@ -254,8 +267,17 @@ environments:
       enabled: true
       minReplicas: 2
       maxReplicas: 10
-      targetCPUUtilization: 80
+      triggers:
+        - type: cpu
+          utilizationPercentage: 80
+    env:
+      - name: LOG_LEVEL
+        value: warn
 ```
+
+- **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
+- **Per-environment env vars** override globals if they share the same name
+- Resources, replicas, and autoscaling are always per-environment
 
 ## Action Reference
 
