@@ -131,21 +131,38 @@ jobs:
 
 ### Sync Secrets
 
-Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Requires two things:
+Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same per-environment structure as `config.yaml`.
 
-1. A mapping file (`.base/secrets.yaml`) that defines which GitHub secret maps to which Key Vault name:
+1. Create `.base/secrets.yaml` with secret mappings:
 
 ```yaml
+# Global secrets — synced to all environments
 secrets:
-  - github: DATABASE_PASSWORD
-    keyvault: database-password
-  - github: API_SECRET
-    keyvault: api-secret
-  - github: REDIS_CONNECTION_STRING
-    keyvault: redis-connection-string
+  - github: SHARED_API_KEY
+    keyvault: shared-api-key
+
+# Per-environment secrets
+environments:
+  stage:
+    - github: DATABASE_PASSWORD_STAGE
+      keyvault: database-password
+    - github: API_SECRET_STAGE
+      keyvault: api-secret
+
+  prod:
+    - github: DATABASE_PASSWORD_PROD
+      keyvault: database-password
+    - github: API_SECRET_PROD
+      keyvault: api-secret
+    - github: STRIPE_SECRET_KEY
+      keyvault: stripe-secret-key
 ```
 
-2. A workflow that passes the actual secret values as `env:` variables (the action reads them by name from the environment):
+- **Global secrets** (`secrets:`) are stored as `customer-shared-api-key` (no env prefix)
+- **Per-environment secrets** (`environments:`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
+- You can use both `secrets:` and `environments:` together, or either one alone
+
+2. Pass the actual secret values as `env:` variables in your workflow:
 
 ```yaml
 name: Sync Secrets
@@ -162,10 +179,23 @@ jobs:
           sparse-checkout: .base
       - uses: NorceTech/base-actions/sync-secrets@v2
         env:
-          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
-          API_SECRET: ${{ secrets.API_SECRET }}
-          REDIS_CONNECTION_STRING: ${{ secrets.REDIS_CONNECTION_STRING }}
+          SHARED_API_KEY: ${{ secrets.SHARED_API_KEY }}
+          DATABASE_PASSWORD_STAGE: ${{ secrets.DATABASE_PASSWORD_STAGE }}
+          DATABASE_PASSWORD_PROD: ${{ secrets.DATABASE_PASSWORD_PROD }}
+          API_SECRET_STAGE: ${{ secrets.API_SECRET_STAGE }}
+          API_SECRET_PROD: ${{ secrets.API_SECRET_PROD }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
         with:
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+```
+
+You can sync only a specific environment, or set a custom customer name:
+
+```yaml
+      - uses: NorceTech/base-actions/sync-secrets@v2
+        with:
+          customer: my-customer    # defaults to repo name
+          environment: prod        # only sync prod secrets (global secrets always sync)
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
@@ -295,6 +325,7 @@ environments:
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `customer` | No | repo name | Customer name |
+| `environment` | No | all | Sync only this environment (default: all) |
 | `secrets_file` | No | `.base/secrets.yaml` | Path to secrets mapping file |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
@@ -310,19 +341,17 @@ environments:
 1. Your workflow calls the action with deployment parameters
 2. Action reads config from `.base/config.yaml` (if present)
 3. Action calls the Base Platform API (partner identified by API key)
-4. Base Platform commits changes to your GitOps repository
-5. ArgoCD syncs the changes to your cluster
+4. Base Platform updates the deployment configuration
+5. Changes are synced to your cluster
 6. Action polls for deployment health status (if `wait_for_healthy: true`)
-
-All deployments follow GitOps principles - changes go through Git, ArgoCD syncs from Git.
 
 ## Health Status Polling
 
-By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status, not just the GitOps commit.
+By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status.
 
 **What it checks:**
-- ArgoCD health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
-- ArgoCD sync status: `Synced`, `OutOfSync`
+- Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
+- Sync status: `Synced`, `OutOfSync`
 - Image tag matches the deployed tag
 
 **Example output:**
