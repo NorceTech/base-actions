@@ -9,6 +9,7 @@ Official GitHub Actions for deploying to the Norce Base Platform.
 | `NorceTech/base-actions/deploy` | Deploy to any environment |
 | `NorceTech/base-actions/preview` | Manage PR preview environments |
 | `NorceTech/base-actions/promote` | Promote between environments |
+| `NorceTech/base-actions/sync-secrets` | Sync GitHub Secrets to Azure Key Vault |
 
 ## Setup
 
@@ -128,6 +129,52 @@ jobs:
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
+### Sync Secrets
+
+```yaml
+name: Sync Secrets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .base
+      - uses: NorceTech/base-actions/sync-secrets@v2
+        env:
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+        with:
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+```
+
+### Deploy with All Inputs
+
+```yaml
+  deploy-prod:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .base
+      - uses: NorceTech/base-actions/deploy@v2
+        with:
+          environment: prod
+          image_tag: ${{ needs.build.outputs.image_tag }}
+          customer: my-customer
+          config_file: .base/config.yaml
+          api_url: https://base-api.norce.tech
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+          wait_for_healthy: 'true'
+          wait_timeout: '600'
+```
+
 ## Configuration
 
 Create `.base/config.yaml` in your repository for environment-specific settings:
@@ -224,6 +271,21 @@ environments:
 | `new_image_tag` | Promoted image tag |
 | `message` | Result message |
 
+### `sync-secrets`
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `customer` | No | repo name | Customer name |
+| `secrets_file` | No | `.base/secrets.yaml` | Path to secrets mapping file |
+| `api_url` | No | `https://base-api.norce.tech` | Base API URL |
+| `api_key` | Yes | - | API key (identifies partner) |
+
+| Output | Description |
+|--------|-------------|
+| `synced_count` | Number of secrets successfully synced |
+| `failed_count` | Number of secrets that failed to sync |
+| `synced_names` | Comma-separated list of synced secret names |
+
 ## How It Works
 
 1. Your workflow calls the action with deployment parameters
@@ -288,6 +350,7 @@ The actions call the following endpoints:
 | `deploy` (status polling) | `GET /api/v1/deploy/status` |
 | `preview` | `POST /api/v1/preview` |
 | `promote` | `POST /api/v1/deploy` (with action=promote) |
+| `sync-secrets` | `POST /api/v1/secrets` |
 
 ## Direct GitOps Access
 
