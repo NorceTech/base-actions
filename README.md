@@ -131,6 +131,22 @@ jobs:
 
 ### Sync Secrets
 
+Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Requires two things:
+
+1. A mapping file (`.base/secrets.yaml`) that defines which GitHub secret maps to which Key Vault name:
+
+```yaml
+secrets:
+  - github: DATABASE_PASSWORD
+    keyvault: database-password
+  - github: API_SECRET
+    keyvault: api-secret
+  - github: REDIS_CONNECTION_STRING
+    keyvault: redis-connection-string
+```
+
+2. A workflow that passes the actual secret values as `env:` variables (the action reads them by name from the environment):
+
 ```yaml
 name: Sync Secrets
 
@@ -148,9 +164,12 @@ jobs:
         env:
           DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
           API_SECRET: ${{ secrets.API_SECRET }}
+          REDIS_CONNECTION_STRING: ${{ secrets.REDIS_CONNECTION_STRING }}
         with:
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
+
+Each `env:` name must match a `github` field in the mapping file. Secrets not found in the environment are skipped with a warning.
 
 ### Deploy with All Inputs
 
