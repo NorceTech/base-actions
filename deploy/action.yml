@@ -75,10 +75,10 @@ runs:
             ENV_CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
           else
             ENV_CONFIG=$(python3 -c "
-        import yaml, json, sys
-        with open('$CONFIG_FILE') as f:
+        import yaml, json, os, sys
+        with open(os.environ['CONFIG_FILE']) as f:
             data = yaml.safe_load(f)
-            env_config = data.get('environments', {}).get('$ENVIRONMENT', {})
+            env_config = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {})
             print(json.dumps(env_config, separators=(',', ':')))
         " 2>/dev/null || echo "{}")
           fi
@@ -100,7 +100,6 @@ runs:
         COMMIT_SHA: ${{ github.sha }}
         CONFIG: ${{ steps.config.outputs.config }}
       run: |
-        # Build JSON body without config first
         BODY=$(jq -n \
           --arg action "deploy" \
           --arg customer "$CUSTOMER" \
@@ -115,7 +114,6 @@ runs:
             commit_sha: $commit_sha
           }')
 
-        # Add config if present and valid
         if [ -n "$CONFIG" ] && [ "$CONFIG" != "{}" ]; then
           BODY=$(echo "$BODY" | jq --argjson config "$CONFIG" '. + {config: $config}' 2>/dev/null || echo "$BODY")
         fi
@@ -186,7 +184,6 @@ runs:
             exit 1
           fi
 
-          # Get deployment status via public deploy/status endpoint
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             "${API_URL}/api/v1/deploy/status?customer=${CUSTOMER}&environment=${ENVIRONMENT}" \
             -H "Authorization: Bearer ${API_KEY}")
@@ -200,20 +197,17 @@ runs:
             continue
           fi
 
-          # Parse status from response (single object, not array)
           HEALTH=$(echo "$BODY" | jq -r '.data.healthStatus // "Unknown"')
           SYNC=$(echo "$BODY" | jq -r '.data.syncStatus // "Unknown"')
           CURRENT_TAG=$(echo "$BODY" | jq -r '.data.imageTag // "unknown"')
 
           STATUS_LINE="  [${ELAPSED}s] Health: ${HEALTH}, Sync: ${SYNC}, Tag: ${CURRENT_TAG}"
 
-          # Only print if status changed
           if [ "$STATUS_LINE" != "$LAST_STATUS" ]; then
             echo "$STATUS_LINE"
             LAST_STATUS="$STATUS_LINE"
           fi
 
-          # Check if deployment is healthy with correct image
           if [ "$HEALTH" == "Healthy" ] && [ "$SYNC" == "Synced" ]; then
             if [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
               echo ""
@@ -230,7 +224,6 @@ runs:
             fi
           fi
 
-          # Check for degraded/failed state
           if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
             echo ""
             echo "::error::Deployment failed - Health: $HEALTH"

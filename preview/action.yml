@@ -61,8 +61,8 @@ runs:
             ENV_CONFIG=$(yq -o=json ".environments.preview // {}" "$CONFIG_FILE")
           else
             ENV_CONFIG=$(python3 -c "
-        import yaml, json, sys
-        with open('$CONFIG_FILE') as f:
+        import yaml, json, os, sys
+        with open(os.environ['CONFIG_FILE']) as f:
             data = yaml.safe_load(f)
             env_config = data.get('environments', {}).get('preview', {})
             print(json.dumps(env_config))
@@ -153,19 +153,26 @@ runs:
 
     - name: Comment on PR
       if: inputs.action != 'delete' && steps.preview.outputs.preview_url != ''
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        PREVIEW_URL: ${{ steps.preview.outputs.preview_url }}
+        HEAD_REF: ${{ github.head_ref }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       with:
         script: |
-          const previewUrl = '${{ steps.preview.outputs.preview_url }}';
+          const previewUrl = process.env.PREVIEW_URL;
           if (!previewUrl) return;
+
+          const headRef = process.env.HEAD_REF;
+          const headSha = process.env.HEAD_SHA;
 
           const body = `## Preview Environment
 
           | | |
           |---|---|
           | **URL** | [${previewUrl}](${previewUrl}) |
-          | **Branch** | \`${{ github.head_ref }}\` |
-          | **Commit** | \`${{ github.event.pull_request.head.sha }}\` |
+          | **Branch** | \`${headRef}\` |
+          | **Commit** | \`${headSha}\` |
 
           > Preview available in ~2-3 minutes. Auto-deleted when PR closes.`;
 

@@ -1,0 +1,155 @@
+name: 'Base Sync Secrets'
+description: 'Sync secrets from GitHub Secrets to Azure Key Vault via Base Platform'
+author: 'NorceTech'
+
+branding:
+  icon: 'lock'
+  color: 'orange'
+
+inputs:
+  customer:
+    description: 'Customer name (defaults to repository name)'
+    required: false
+  secrets_file:
+    description: 'Path to secrets mapping file'
+    required: false
+    default: '.base/secrets.yaml'
+  api_url:
+    description: 'Base Platform API URL'
+    required: false
+    default: 'https://base-api.norce.tech'
+  api_key:
+    description: 'Base Platform API key (identifies partner)'
+    required: true
+
+outputs:
+  synced_count:
+    description: 'Number of secrets successfully synced'
+    value: ${{ steps.sync.outputs.synced_count }}
+  failed_count:
+    description: 'Number of secrets that failed to sync'
+    value: ${{ steps.sync.outputs.failed_count }}
+  synced_names:
+    description: 'Comma-separated list of synced secret names'
+    value: ${{ steps.sync.outputs.synced_names }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Sync secrets to Key Vault
+      id: sync
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api_url }}
+        API_KEY: ${{ inputs.api_key }}
+        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        SECRETS_FILE: ${{ inputs.secrets_file }}
+      run: |
+        if [ ! -f "$SECRETS_FILE" ]; then
+          echo "::error::Secrets mapping file not found: $SECRETS_FILE"
+          echo "synced_count=0" >> $GITHUB_OUTPUT
+          echo "failed_count=0" >> $GITHUB_OUTPUT
+          echo "synced_names=" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        echo "Reading secrets mapping from: $SECRETS_FILE"
+
+        if command -v yq &> /dev/null; then
+          MAPPINGS=$(yq -o=json '.secrets' "$SECRETS_FILE")
+        else
+          MAPPINGS=$(python3 -c "
+        import yaml, json, os, sys
+        with open(os.environ['SECRETS_FILE']) as f:
+            data = yaml.safe_load(f)
+            print(json.dumps(data.get('secrets', []), separators=(',', ':')))
+        " 2>/dev/null)
+        fi
+
+        if [ -z "$MAPPINGS" ] || [ "$MAPPINGS" = "null" ] || [ "$MAPPINGS" = "[]" ]; then
+          echo "No secret mappings found in $SECRETS_FILE"
+          echo "synced_count=0" >> $GITHUB_OUTPUT
+          echo "failed_count=0" >> $GITHUB_OUTPUT
+          echo "synced_names=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        SECRETS_JSON="[]"
+        SKIPPED=0
+        TOTAL=$(echo "$MAPPINGS" | jq 'length')
+
+        echo "Found $TOTAL secret mapping(s)"
+
+        for i in $(seq 0 $((TOTAL - 1))); do
+          GITHUB_NAME=$(echo "$MAPPINGS" | jq -r ".[$i].github")
+          KV_NAME=$(echo "$MAPPINGS" | jq -r ".[$i].keyvault")
+
+          # Indirect expansion: reads the env var whose name matches GITHUB_NAME
+          VALUE="${!GITHUB_NAME:-}"
+
+          if [ -z "$VALUE" ]; then
+            echo "::warning::Secret '$GITHUB_NAME' is not set in environment, skipping '$KV_NAME'"
+            SKIPPED=$((SKIPPED + 1))
+            continue
+          fi
+
+          SECRETS_JSON=$(echo "$SECRETS_JSON" | jq --arg name "$KV_NAME" --arg value "$VALUE" \
+            '. + [{"name": $name, "value": $value}]')
+
+          echo "  Mapped: $GITHUB_NAME → $KV_NAME"
+        done
+
+        if [ "$SKIPPED" -gt 0 ]; then
+          echo "::warning::Skipped $SKIPPED secret(s) with missing values"
+        fi
+
+        SECRETS_COUNT=$(echo "$SECRETS_JSON" | jq 'length')
+
+        if [ "$SECRETS_COUNT" -eq 0 ]; then
+          echo "No secrets to sync (all values missing)"
+          echo "synced_count=0" >> $GITHUB_OUTPUT
+          echo "failed_count=$SKIPPED" >> $GITHUB_OUTPUT
+          echo "synced_names=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        BODY=$(jq -n \
+          --arg customer "$CUSTOMER" \
+          --argjson secrets "$SECRETS_JSON" \
+          '{ customer: $customer, secrets: $secrets }')
+
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/secrets" \
+          -H "Authorization: Bearer ${API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "$BODY")
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -ne 200 ] && [ "$HTTP_CODE" -ne 207 ]; then
+          echo "::error::Secrets sync failed (HTTP $HTTP_CODE)"
+          echo "$RESPONSE_BODY" | jq . 2>/dev/null || echo "$RESPONSE_BODY"
+          echo "synced_count=0" >> $GITHUB_OUTPUT
+          echo "failed_count=$SECRETS_COUNT" >> $GITHUB_OUTPUT
+          echo "synced_names=" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        SYNCED=$(echo "$RESPONSE_BODY" | jq -r '.data.synced | join(",")')
+        SYNCED_COUNT=$(echo "$RESPONSE_BODY" | jq '.data.synced | length')
+        FAILED_COUNT=$(echo "$RESPONSE_BODY" | jq '.data.failed | length')
+
+        echo ""
+        echo "Secrets sync complete:"
+        echo "  Synced: $SYNCED_COUNT"
+        echo "  Failed: $FAILED_COUNT"
+
+        if [ "$FAILED_COUNT" -gt 0 ]; then
+          echo ""
+          echo "::warning::Some secrets failed to sync:"
+          echo "$RESPONSE_BODY" | jq -r '.data.failed[] | "  - \(.name): \(.error)"'
+        fi
+
+        echo "synced_count=$SYNCED_COUNT" >> $GITHUB_OUTPUT
+        echo "failed_count=$FAILED_COUNT" >> $GITHUB_OUTPUT
+        echo "synced_names=$SYNCED" >> $GITHUB_OUTPUT
