@@ -226,10 +226,19 @@ Each `env:` name must match a `github` field in the mapping file. Secrets not fo
 
 ## Configuration
 
-Create `.base/config.yaml` in your repository for environment-specific settings:
+Create `.base/config.yaml` in your repository. Use `environments.global` for env vars shared across all environments, and per-environment sections for environment-specific settings:
 
 ```yaml
 environments:
+  # Global env vars — applied to all environments
+  global:
+    env:
+      - name: PORT
+        value: '3000'
+      - name: HOSTNAME
+        value: '0.0.0.0'
+
+  # Per-environment config
   preview:
     replicas: 1
     resources:
@@ -243,6 +252,9 @@ environments:
       limits:
         cpu: 250m
         memory: 256Mi
+    env:
+      - name: LOG_LEVEL
+        value: debug
 
   prod:
     replicas: 3
@@ -254,8 +266,17 @@ environments:
       enabled: true
       minReplicas: 2
       maxReplicas: 10
-      targetCPUUtilization: 80
+      triggers:
+        - type: cpu
+          utilizationPercentage: 80
+    env:
+      - name: LOG_LEVEL
+        value: warn
 ```
+
+- **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
+- **Per-environment env vars** override globals if they share the same name
+- Resources, replicas, and autoscaling are always per-environment
 
 ## Action Reference
 
