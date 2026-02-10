@@ -8,7 +8,7 @@ branding:
 
 inputs:
   environment:
-    description: 'Target environment (e.g. stage, prod, dev). Synonyms like "staging" or "production" are auto-normalized.'
+    description: 'Target environment (e.g. stage, staging, prod, dev). Must match exactly the environment name in Base Portal.'
     required: true
   image_tag:
     description: 'Image tag to deploy'
@@ -44,7 +44,7 @@ outputs:
     description: 'Kubernetes namespace'
     value: ${{ steps.deploy.outputs.namespace }}
   git_commit_sha:
-    description: 'Git commit SHA in GitOps repo'
+    description: 'Git commit SHA for the deployment'
     value: ${{ steps.deploy.outputs.git_commit_sha }}
   previous_image_tag:
     description: 'Previous image tag'
@@ -212,7 +212,7 @@ runs:
         echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
         echo ""
-        echo "✅ GitOps repo updated: ${IMAGE_TAG} → ${ENVIRONMENT}"
+        echo "✅ Deploy submitted: ${IMAGE_TAG} → ${ENVIRONMENT}"
         if [ -n "$PREV_TAG" ]; then
           echo "   Previous tag: $PREV_TAG"
         fi
@@ -259,7 +259,7 @@ runs:
             echo "║   • Image pull error (wrong tag or ACR permissions)"
             echo "║   • Application crash loop (check pod logs)"
             echo "║   • Health/readiness probe failing"
-            echo "║   • ArgoCD sync still in progress (try increasing wait_timeout)"
+            echo "║   • Sync still in progress (try increasing wait_timeout)"
             echo "╚══════════════════════════════════════════════════════"
             echo ""
             echo "::error::Timeout after ${TIMEOUT}s — Health: ${LAST_HEALTH:-Unknown}, Sync: ${LAST_SYNC:-Unknown}"
@@ -322,14 +322,14 @@ runs:
             echo "║ Sync: $SYNC | Tag: $CURRENT_TAG | Time: ${ELAPSED}s"
             echo "║"
             if [ "$HEALTH" == "Missing" ]; then
-              echo "║ The ArgoCD application was not found."
-              echo "║ The environment may not be set up correctly."
+              echo "║ The application for this environment was not found."
+              echo "║ Verify the environment name is correct in Base Portal."
             else
               echo "║ The deployment is degraded — pods are crashing or"
               echo "║ failing health checks."
             fi
             echo "║"
-            echo "║ Check the Base Portal Health tab or ArgoCD for details."
+            echo "║ Check the Base Portal Health tab for details."
             echo "╚══════════════════════════════════════════════════════"
             echo ""
             echo "::error::Deployment $HEALTH — Sync: $SYNC, Tag: $CURRENT_TAG"
@@ -355,7 +355,7 @@ runs:
       run: |
         if [ "$DEPLOY_SUCCESS" != "true" ]; then
           echo "success=false" >> $GITHUB_OUTPUT
-          echo "message=Deployment failed to update GitOps repo" >> $GITHUB_OUTPUT
+          echo "message=Deployment failed to submit" >> $GITHUB_OUTPUT
           exit 0
         fi
 
