@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/deploy@v2
+      - uses: NorceTech/base-actions/deploy@v1
         with:
           environment: stage
           image_tag: ${{ needs.build.outputs.image_tag }}
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/deploy@v2
+      - uses: NorceTech/base-actions/deploy@v1
         with:
           environment: prod
           image_tag: ${{ needs.build.outputs.image_tag }}
@@ -102,7 +102,7 @@ jobs:
         if: github.event.action != 'closed'
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/preview@v2
+      - uses: NorceTech/base-actions/preview@v1
         with:
           action: ${{ github.event.action == 'closed' && 'delete' || (github.event.action == 'opened' && 'create' || 'update') }}
           image_tag: ${{ needs.build.outputs.image_tag }}
@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: NorceTech/base-actions/promote@v2
+      - uses: NorceTech/base-actions/promote@v1
         with:
           from_environment: stage
           to_environment: prod
@@ -177,7 +177,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/sync-secrets@v2
+      - uses: NorceTech/base-actions/sync-secrets@v1
         env:
           SHARED_API_KEY: ${{ secrets.SHARED_API_KEY }}
           DATABASE_PASSWORD_STAGE: ${{ secrets.DATABASE_PASSWORD_STAGE }}
@@ -192,7 +192,7 @@ jobs:
 You can sync only a specific environment, or set a custom customer name:
 
 ```yaml
-      - uses: NorceTech/base-actions/sync-secrets@v2
+      - uses: NorceTech/base-actions/sync-secrets@v1
         with:
           customer: my-customer    # defaults to repo name
           environment: prod        # only sync prod secrets (global secrets always sync)
@@ -212,7 +212,7 @@ Each `env:` name must match a `github` field in the mapping file. Secrets not fo
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/deploy@v2
+      - uses: NorceTech/base-actions/deploy@v1
         with:
           environment: prod
           image_tag: ${{ needs.build.outputs.image_tag }}
@@ -370,7 +370,7 @@ By default, the deploy action waits for your deployment to become healthy before
 
 **Disable health polling** (not recommended):
 ```yaml
-- uses: NorceTech/base-actions/deploy@v2
+- uses: NorceTech/base-actions/deploy@v1
   with:
     environment: stage
     image_tag: ${{ steps.tag.outputs.tag }}
@@ -380,7 +380,7 @@ By default, the deploy action waits for your deployment to become healthy before
 
 **Adjust timeout:**
 ```yaml
-- uses: NorceTech/base-actions/deploy@v2
+- uses: NorceTech/base-actions/deploy@v1
   with:
     environment: prod
     image_tag: ${{ steps.tag.outputs.tag }}
