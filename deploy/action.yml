@@ -8,7 +8,7 @@ branding:
 
 inputs:
   environment:
-    description: 'Target environment (stage, prod, dev, qa, etc.)'
+    description: 'Target environment (e.g. stage, prod, dev). Synonyms like "staging" or "production" are auto-normalized.'
     required: true
   image_tag:
     description: 'Image tag to deploy'
@@ -128,11 +128,71 @@ runs:
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
 
-        echo "Response: $HTTP_CODE"
-
         if [ "$HTTP_CODE" -ne 200 ]; then
-          echo "::error::Deployment failed"
-          echo "$BODY" | jq . 2>/dev/null || echo "$BODY"
+          # Extract error details from API response
+          ERROR_CODE=$(echo "$BODY" | jq -r '.error.code // empty' 2>/dev/null)
+          ERROR_MSG=$(echo "$BODY" | jq -r '.error.message // empty' 2>/dev/null)
+          REQUEST_ID=$(echo "$BODY" | jq -r '.error.requestId // empty' 2>/dev/null)
+          DETAILS=$(echo "$BODY" | jq -r '.error.details[]?.message // empty' 2>/dev/null)
+
+          echo ""
+          echo "╔══════════════════════════════════════════════════════"
+          echo "║ ❌ DEPLOYMENT FAILED (HTTP $HTTP_CODE)"
+          echo "╠══════════════════════════════════════════════════════"
+
+          if [ -n "$ERROR_MSG" ]; then
+            echo "║ Error: $ERROR_MSG"
+          fi
+
+          if [ -n "$DETAILS" ]; then
+            echo "║ Details: $DETAILS"
+          fi
+
+          # Provide actionable guidance based on error type
+          case "$HTTP_CODE" in
+            401)
+              echo "║"
+              echo "║ 🔑 Fix: Check that your api_key secret is set correctly."
+              echo "║   The API key should start with 'base_' and be configured"
+              echo "║   as a repository or organization secret."
+              ;;
+            403)
+              echo "║"
+              echo "║ 🔒 Fix: The customer name '$CUSTOMER' was not found."
+              echo "║   Check that the 'customer' input matches the exact name"
+              echo "║   registered in the Base Portal. If not set, it defaults"
+              echo "║   to the repository name: '${{ github.event.repository.name }}'."
+              ;;
+            400)
+              echo "║"
+              echo "║ 📋 Fix: The request payload is invalid."
+              echo "║   Verify that 'environment' and 'image_tag' are correct."
+              echo "║   Environment must be lowercase alphanumeric with hyphens."
+              ;;
+            500)
+              echo "║"
+              echo "║ 🔧 This is a server-side error. Contact NorceTech support"
+              echo "║   with request ID: ${REQUEST_ID:-unknown}"
+              ;;
+            503)
+              echo "║"
+              echo "║ 🔧 The deploy service is temporarily unavailable."
+              echo "║   Retry the deployment in a few minutes."
+              ;;
+          esac
+
+          echo "║"
+          echo "║ Customer:    $CUSTOMER"
+          echo "║ Environment: $ENVIRONMENT"
+          echo "║ Image Tag:   $IMAGE_TAG"
+          if [ -n "$REQUEST_ID" ]; then
+            echo "║ Request ID:  $REQUEST_ID"
+          fi
+          echo "╚══════════════════════════════════════════════════════"
+          echo ""
+
+          echo "::error::Deploy failed ($HTTP_CODE): ${ERROR_MSG:-Unknown error}"
+
           echo "success=false" >> $GITHUB_OUTPUT
           echo "deploy_success=false" >> $GITHUB_OUTPUT
           exit 1
@@ -151,7 +211,14 @@ runs:
         echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
         echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
-        echo "✓ GitOps repo updated: ${IMAGE_TAG} → ${ENVIRONMENT}"
+        echo ""
+        echo "✅ GitOps repo updated: ${IMAGE_TAG} → ${ENVIRONMENT}"
+        if [ -n "$PREV_TAG" ]; then
+          echo "   Previous tag: $PREV_TAG"
+        fi
+        if [ -n "$GIT_SHA" ]; then
+          echo "   Git commit:   ${GIT_SHA:0:7}"
+        fi
         echo "$MESSAGE"
 
     - name: Wait for healthy deployment
@@ -177,9 +244,27 @@ runs:
           ELAPSED=$((CURRENT_TIME - START_TIME))
 
           if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "::error::Timeout waiting for deployment to become healthy after ${TIMEOUT}s"
+            echo ""
+            echo "╔══════════════════════════════════════════════════════"
+            echo "║ ⏰ HEALTH CHECK TIMEOUT (${TIMEOUT}s)"
+            echo "╠══════════════════════════════════════════════════════"
+            echo "║ The deployment was submitted to Git successfully,"
+            echo "║ but the pods did not become healthy in time."
+            echo "║"
+            echo "║ Last status: Health=${LAST_HEALTH:-Unknown}, Sync=${LAST_SYNC:-Unknown}"
+            echo "║ Expected tag: $IMAGE_TAG"
+            echo "║ Current tag:  ${LAST_TAG:-unknown}"
+            echo "║"
+            echo "║ Common causes:"
+            echo "║   • Image pull error (wrong tag or ACR permissions)"
+            echo "║   • Application crash loop (check pod logs)"
+            echo "║   • Health/readiness probe failing"
+            echo "║   • ArgoCD sync still in progress (try increasing wait_timeout)"
+            echo "╚══════════════════════════════════════════════════════"
+            echo ""
+            echo "::error::Timeout after ${TIMEOUT}s — Health: ${LAST_HEALTH:-Unknown}, Sync: ${LAST_SYNC:-Unknown}"
             echo "health_status=Timeout" >> $GITHUB_OUTPUT
-            echo "sync_status=Unknown" >> $GITHUB_OUTPUT
+            echo "sync_status=${LAST_SYNC:-Unknown}" >> $GITHUB_OUTPUT
             echo "healthy=false" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -200,6 +285,11 @@ runs:
           HEALTH=$(echo "$BODY" | jq -r '.data.healthStatus // "Unknown"')
           SYNC=$(echo "$BODY" | jq -r '.data.syncStatus // "Unknown"')
           CURRENT_TAG=$(echo "$BODY" | jq -r '.data.imageTag // "unknown"')
+
+          # Track latest status for timeout error message
+          LAST_HEALTH="$HEALTH"
+          LAST_SYNC="$SYNC"
+          LAST_TAG="$CURRENT_TAG"
 
           STATUS_LINE="  [${ELAPSED}s] Health: ${HEALTH}, Sync: ${SYNC}, Tag: ${CURRENT_TAG}"
 
@@ -226,7 +316,23 @@ runs:
 
           if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
             echo ""
-            echo "::error::Deployment failed - Health: $HEALTH"
+            echo "╔══════════════════════════════════════════════════════"
+            echo "║ ❌ DEPLOYMENT UNHEALTHY — $HEALTH"
+            echo "╠══════════════════════════════════════════════════════"
+            echo "║ Sync: $SYNC | Tag: $CURRENT_TAG | Time: ${ELAPSED}s"
+            echo "║"
+            if [ "$HEALTH" == "Missing" ]; then
+              echo "║ The ArgoCD application was not found."
+              echo "║ The environment may not be set up correctly."
+            else
+              echo "║ The deployment is degraded — pods are crashing or"
+              echo "║ failing health checks."
+            fi
+            echo "║"
+            echo "║ Check the Base Portal Health tab or ArgoCD for details."
+            echo "╚══════════════════════════════════════════════════════"
+            echo ""
+            echo "::error::Deployment $HEALTH — Sync: $SYNC, Tag: $CURRENT_TAG"
             echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
             echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
             echo "healthy=false" >> $GITHUB_OUTPUT
