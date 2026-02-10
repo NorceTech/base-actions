@@ -126,6 +126,10 @@ if [ "$HAS_ENVIRONMENTS" != "true" ] && [ "$HAS_SECRETS" != "true" ]; then
   exit 1
 fi
 
+# Support both formats for global secrets:
+#   New (consistent with config.yaml): environments.global: [...]
+#   Legacy: secrets: [...]
+# Both are synced as environment="all". If both exist, they are merged.
 if [ "$HAS_SECRETS" = "true" ]; then
   MAPPINGS=$(echo "$FILE_JSON" | jq '.secrets')
   sync_env_secrets "all" "$MAPPINGS"
@@ -135,12 +139,18 @@ if [ "$HAS_ENVIRONMENTS" = "true" ]; then
   ENV_NAMES=$(echo "$FILE_JSON" | jq -r '.environments | keys[]')
 
   for ENV_NAME in $ENV_NAMES; do
-    if [ -n "$TARGET_ENV" ] && [ "$ENV_NAME" != "$TARGET_ENV" ]; then
+    # environments.global → sync as "all" (global secrets)
+    local_env="$ENV_NAME"
+    if [ "$ENV_NAME" = "global" ]; then
+      local_env="all"
+    fi
+
+    if [ -n "$TARGET_ENV" ] && [ "$ENV_NAME" != "$TARGET_ENV" ] && [ "$ENV_NAME" != "global" ]; then
       continue
     fi
 
     MAPPINGS=$(echo "$FILE_JSON" | jq --arg env "$ENV_NAME" '.environments[$env]')
-    sync_env_secrets "$ENV_NAME" "$MAPPINGS"
+    sync_env_secrets "$local_env" "$MAPPINGS"
   done
 fi
 

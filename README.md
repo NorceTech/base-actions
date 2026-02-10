@@ -131,18 +131,18 @@ jobs:
 
 ### Sync Secrets
 
-Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same per-environment structure as `config.yaml`.
+Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same `environments.global` / `environments.<env>` structure as `config.yaml`.
 
 1. Create `.base/secrets.yaml` with secret mappings:
 
 ```yaml
-# Global secrets — synced to all environments
-secrets:
-  - github: SHARED_API_KEY
-    keyvault: shared-api-key
-
-# Per-environment secrets
 environments:
+  # Global secrets — synced to all environments
+  global:
+    - github: SHARED_API_KEY
+      keyvault: shared-api-key
+
+  # Per-environment secrets
   stage:
     - github: DATABASE_PASSWORD_STAGE
       keyvault: database-password
@@ -158,9 +158,10 @@ environments:
       keyvault: stripe-secret-key
 ```
 
-- **Global secrets** (`secrets:`) are stored as `customer-shared-api-key` (no env prefix)
-- **Per-environment secrets** (`environments:`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
-- You can use both `secrets:` and `environments:` together, or either one alone
+- **Global secrets** (`environments.global`) are stored as `customer-shared-api-key` (no env prefix)
+- **Per-environment secrets** (`environments.<env>`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
+- Global secrets always sync, even when targeting a specific environment
+- Legacy format: a top-level `secrets:` key is also supported as an alias for `environments.global`
 
 2. Pass the actual secret values as `env:` variables in your workflow:
 
