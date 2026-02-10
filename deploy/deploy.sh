@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Read environment config from YAML
+if [ -f "$CONFIG_FILE" ]; then
+  if command -v yq &> /dev/null; then
+    CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+  else
+    CONFIG=$(python3 -c "
+import yaml, json, os, sys
+with open(os.environ['CONFIG_FILE']) as f:
+    data = yaml.safe_load(f)
+    env_config = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {})
+    print(json.dumps(env_config, separators=(',', ':')))
+" 2>/dev/null || echo "{}")
+  fi
+else
+  CONFIG="{}"
+fi
+
 BODY=$(jq -n \
   --arg action "deploy" \
   --arg customer "$CUSTOMER" \
@@ -108,7 +125,6 @@ echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
 echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
 echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
-echo ""
 echo "✅ Deploy submitted: ${IMAGE_TAG} → ${ENVIRONMENT}"
 if [ -n "$PREV_TAG" ]; then
   echo "   Previous tag: $PREV_TAG"

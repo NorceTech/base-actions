@@ -62,14 +62,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Read configuration
-      id: config
-      shell: bash
-      env:
-        CONFIG_FILE: ${{ inputs.config_file }}
-        ENVIRONMENT: ${{ inputs.environment }}
-      run: bash ${{ github.action_path }}/read-config.sh
-
     - name: Deploy to Base Platform
       id: deploy
       shell: bash
@@ -80,7 +72,7 @@ runs:
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         COMMIT_SHA: ${{ github.sha }}
-        CONFIG: ${{ steps.config.outputs.config }}
+        CONFIG_FILE: ${{ inputs.config_file }}
         REPO_NAME: ${{ github.event.repository.name }}
       run: bash ${{ github.action_path }}/deploy.sh
 

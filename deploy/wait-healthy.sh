@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}s)..."
+echo "::group::⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}s)"
 
 START_TIME=$(date +%s)
 POLL_INTERVAL=10
@@ -30,6 +30,7 @@ while true; do
     echo "║   • Sync still in progress (try increasing wait_timeout)"
     echo "╚══════════════════════════════════════════════════════"
     echo ""
+    echo "::endgroup::"
     echo "::error::Timeout after ${TIMEOUT}s — Health: ${LAST_HEALTH:-Unknown}, Sync: ${LAST_SYNC:-Unknown}"
     echo "health_status=Timeout" >> $GITHUB_OUTPUT
     echo "sync_status=${LAST_SYNC:-Unknown}" >> $GITHUB_OUTPUT
@@ -67,12 +68,8 @@ while true; do
 
   if [ "$HEALTH" == "Healthy" ] && [ "$SYNC" == "Synced" ]; then
     if [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
-      echo ""
-      echo "✅ Deployment healthy!"
-      echo "   Health: $HEALTH"
-      echo "   Sync: $SYNC"
-      echo "   Image: $CURRENT_TAG"
-      echo "   Time: ${ELAPSED}s"
+      echo "::endgroup::"
+      echo "✅ Deployment healthy! (${ELAPSED}s)"
 
       echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
       echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
@@ -98,6 +95,7 @@ while true; do
     echo "║"
     echo "║ Check the Base Portal Health tab for details."
     echo "╚══════════════════════════════════════════════════════"
+    echo "::endgroup::"
     echo ""
     echo "::error::Deployment $HEALTH — Sync: $SYNC, Tag: $CURRENT_TAG"
     echo "health_status=$HEALTH" >> $GITHUB_OUTPUT

@@ -48,14 +48,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Read configuration
-      id: config
-      if: inputs.action != 'delete'
-      shell: bash
-      env:
-        CONFIG_FILE: ${{ inputs.config_file }}
-      run: bash ${{ github.action_path }}/read-config.sh
-
     - name: Manage Preview Environment
       id: preview
       shell: bash
@@ -70,7 +62,7 @@ runs:
         COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_URL: ${{ github.event.pull_request.html_url }}
-        CONFIG: ${{ steps.config.outputs.config }}
+        CONFIG_FILE: ${{ inputs.config_file }}
       run: bash ${{ github.action_path }}/preview.sh
 
     - name: Comment on PR

@@ -21,8 +21,6 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
-echo "Response: $HTTP_CODE"
-
 if [ "$HTTP_CODE" -ne 200 ]; then
   echo "::error::Promotion failed"
   echo "$BODY" | jq . 2>/dev/null || echo "$BODY"

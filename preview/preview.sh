@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Read preview config from YAML (skip for delete)
+if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
+  if command -v yq &> /dev/null; then
+    CONFIG=$(yq -o=json ".environments.preview // {}" "$CONFIG_FILE")
+  else
+    CONFIG=$(python3 -c "
+import yaml, json, os, sys
+with open(os.environ['CONFIG_FILE']) as f:
+    data = yaml.safe_load(f)
+    env_config = data.get('environments', {}).get('preview', {})
+    print(json.dumps(env_config))
+" 2>/dev/null || echo "{}")
+  fi
+else
+  CONFIG="${CONFIG:-{}}"
+fi
+
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
@@ -28,8 +45,6 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
-
-echo "Response: $HTTP_CODE"
 
 if [ "$HTTP_CODE" -ne 200 ]; then
   if [ "$ACTION" = "delete" ]; then
