@@ -5,6 +5,7 @@ echo "::group::⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}
 
 START_TIME=$(date +%s)
 POLL_INTERVAL=10
+SYNC_GRACE=30
 LAST_STATUS=""
 
 while true; do
@@ -70,13 +71,22 @@ while true; do
     if [ "$SYNC" == "Synced" ]; then
       echo "::endgroup::"
       echo "✅ Deployment healthy and synced! (${ELAPSED}s)"
-    else
-      # Healthy + correct tag but OutOfSync — KEDA or other controllers may
-      # modify fields (e.g. replicas) causing permanent drift. This is fine.
-      echo "::endgroup::"
-      echo "✅ Deployment healthy! (${ELAPSED}s) (Sync: ${SYNC} — likely KEDA replica drift)"
+      echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
+      echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
+      echo "healthy=true" >> $GITHUB_OUTPUT
+      exit 0
     fi
 
+    # Healthy + correct tag but OutOfSync.
+    # Give ArgoCD time to sync the new Git commit before assuming drift.
+    if [ $ELAPSED -lt $SYNC_GRACE ]; then
+      sleep $POLL_INTERVAL
+      continue
+    fi
+
+    # Past grace period — likely KEDA replica drift or similar controller drift.
+    echo "::endgroup::"
+    echo "✅ Deployment healthy! (${ELAPSED}s) (Sync: ${SYNC} — likely KEDA replica drift)"
     echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
     echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
     echo "healthy=true" >> $GITHUB_OUTPUT
