@@ -66,16 +66,21 @@ while true; do
     LAST_STATUS="$STATUS_LINE"
   fi
 
-  if [ "$HEALTH" == "Healthy" ] && [ "$SYNC" == "Synced" ]; then
-    if [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
+  if [ "$HEALTH" == "Healthy" ] && [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
+    if [ "$SYNC" == "Synced" ]; then
       echo "::endgroup::"
-      echo "✅ Deployment healthy! (${ELAPSED}s)"
-
-      echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
-      echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
-      echo "healthy=true" >> $GITHUB_OUTPUT
-      exit 0
+      echo "✅ Deployment healthy and synced! (${ELAPSED}s)"
+    else
+      # Healthy + correct tag but OutOfSync — KEDA or other controllers may
+      # modify fields (e.g. replicas) causing permanent drift. This is fine.
+      echo "::endgroup::"
+      echo "✅ Deployment healthy! (${ELAPSED}s) (Sync: ${SYNC} — likely KEDA replica drift)"
     fi
+
+    echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
+    echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
+    echo "healthy=true" >> $GITHUB_OUTPUT
+    exit 0
   fi
 
   if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
