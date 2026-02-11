@@ -9,7 +9,7 @@ Official GitHub Actions for deploying to the Norce Base Platform.
 | `NorceTech/base-actions/deploy` | Deploy to any environment |
 | `NorceTech/base-actions/preview` | Manage PR preview environments |
 | `NorceTech/base-actions/promote` | Promote between environments |
-| `NorceTech/base-actions/sync-secrets` | Sync GitHub Secrets to Azure Key Vault |
+| `NorceTech/base-actions/sync-secrets` | Sync GitHub Secrets to your secure vault |
 
 ## Setup
 
@@ -131,7 +131,7 @@ jobs:
 
 ### Sync Secrets
 
-Syncs GitHub Secrets to Azure Key Vault via the Base Platform API. Uses the same `environments.global` / `environments.<env>` structure as `config.yaml`.
+Syncs GitHub Secrets to your secure vault via the Base Platform API. Uses the same `environments.global` / `environments.<env>` structure as `config.yaml`.
 
 1. Create `.base/secrets.yaml` with secret mappings:
 
@@ -278,6 +278,7 @@ environments:
 - **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
 - **Per-environment env vars** override globals if they share the same name
 - Resources, replicas, and autoscaling are always per-environment
+- **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
 
 ## Action Reference
 
@@ -297,12 +298,12 @@ environments:
 | Output | Description |
 |--------|-------------|
 | `success` | Whether deployment succeeded (includes health check if enabled) |
-| `namespace` | Kubernetes namespace |
-| `git_commit_sha` | Commit SHA in GitOps repo |
+| `namespace` | Deployment namespace |
+| `git_commit_sha` | Commit SHA for the deployment |
 | `previous_image_tag` | Previous image tag |
 | `message` | Result message |
 | `health_status` | Final health status (Healthy, Progressing, Degraded, Timeout) |
-| `sync_status` | Final sync status (Synced, OutOfSync, etc.) |
+| `sync_status` | Final sync status |
 
 ### `preview`
 
@@ -319,8 +320,8 @@ environments:
 |--------|-------------|
 | `success` | Whether action succeeded |
 | `preview_url` | URL of the preview environment |
-| `namespace` | Kubernetes namespace |
-| `git_commit_sha` | Commit SHA in GitOps repo |
+| `namespace` | Deployment namespace |
+| `git_commit_sha` | Commit SHA for the deployment |
 | `message` | Result message |
 
 ### `promote`
@@ -336,8 +337,8 @@ environments:
 | Output | Description |
 |--------|-------------|
 | `success` | Whether promotion succeeded |
-| `namespace` | Kubernetes namespace |
-| `git_commit_sha` | Commit SHA in GitOps repo |
+| `namespace` | Deployment namespace |
+| `git_commit_sha` | Commit SHA for the deployment |
 | `previous_image_tag` | Previous tag in target env |
 | `new_image_tag` | Promoted image tag |
 | `message` | Result message |
@@ -373,21 +374,16 @@ By default, the deploy action waits for your deployment to become healthy before
 
 **What it checks:**
 - Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
-- Sync status: `Synced`, `OutOfSync`
 - Image tag matches the deployed tag
 
 **Example output:**
 ```
 ⏳ Waiting for deployment to become healthy (timeout: 300s)...
-  [10s] Health: Progressing, Sync: Synced, Tag: main-bc5059
-  [20s] Health: Progressing, Sync: Synced, Tag: main-bc5059
-  [35s] Health: Healthy, Sync: Synced, Tag: main-bc5059
+  [10s] Health: Progressing, Tag: main-bc5059
+  [20s] Health: Progressing, Tag: main-bc5059
+  [35s] Health: Healthy, Tag: main-bc5059
 
-✅ Deployment healthy!
-   Health: Healthy
-   Sync: Synced
-   Image: main-bc5059
-   Time: 35s
+✅ Deployment healthy and synced! (35s)
 ```
 
 **Disable health polling** (not recommended):
@@ -422,9 +418,6 @@ The actions call the following endpoints:
 | `promote` | `POST /api/v1/deploy` (with action=promote) |
 | `sync-secrets` | `POST /api/v1/secrets` |
 
-## Direct GitOps Access
+## Advanced Configuration
 
-Partners also have direct access to their `base-apps-<partner>` repository for:
-- Custom Kustomize overlays
-- Advanced configuration
-- Custom Kubernetes manifests
+Partners also have direct access to their `base-apps-<partner>` repository for advanced configuration and custom manifests.
