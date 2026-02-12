@@ -249,6 +249,9 @@ environments:
 
   stage:
     replicas: 1
+    containerPort: 3000              # default, can be omitted
+    healthCheckPath: /api/health     # optional: HTTP readiness probe (omit for TCP default)
+    startupGracePeriod: 300          # optional: seconds to wait for app startup (default: 300)
     resources:
       limits:
         cpu: 250m
@@ -278,6 +281,9 @@ environments:
 - **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
 - **Per-environment env vars** override globals if they share the same name
 - Resources, replicas, and autoscaling are always per-environment
+- **`healthCheckPath`** — HTTP readiness probe path. Default is TCP port check (safe for auth-protected apps). Only set if your app has a public health endpoint returning HTTP 200.
+- **`startupGracePeriod`** — Seconds to wait for app startup (default: 300, range: 10–900). Increase for slow-starting apps like large Next.js SSR builds.
+- **`containerPort`** — Port your app listens on (default: 3000). Updates Deployment containerPort and Service targetPort.
 - **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
 
 ## Action Reference
