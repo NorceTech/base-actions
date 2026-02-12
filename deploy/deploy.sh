@@ -49,6 +49,11 @@ BODY=$(jq -n \
     commit_sha: $commit_sha
   }')
 
+# Add image field if specified (overrides customer name as ACR repository)
+if [ -n "${IMAGE:-}" ]; then
+  BODY=$(echo "$BODY" | jq --arg image "$IMAGE" '. + {image: $image}')
+fi
+
 if [ -n "$CONFIG" ] && [ "$CONFIG" != "{}" ]; then
   BODY=$(echo "$BODY" | jq --argjson config "$CONFIG" '. + {config: $config}' 2>/dev/null || echo "$BODY")
 fi

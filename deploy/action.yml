@@ -16,6 +16,9 @@ inputs:
   customer:
     description: 'Customer name (defaults to repository name)'
     required: false
+  image:
+    description: 'Container image name (defaults to customer name). Use when the image name differs from the customer name.'
+    required: false
   config_file:
     description: 'Path to config file'
     required: false
@@ -71,6 +74,7 @@ runs:
         CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
+        IMAGE: ${{ inputs.image }}
         COMMIT_SHA: ${{ github.sha }}
         CONFIG_FILE: ${{ inputs.config_file }}
         REPO_NAME: ${{ github.event.repository.name }}
