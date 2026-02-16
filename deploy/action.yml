@@ -56,11 +56,14 @@ outputs:
     description: 'Deployment message'
     value: ${{ steps.final-status.outputs.message }}
   health_status:
-    description: 'Final health status (Healthy, Progressing, Degraded, etc.)'
+    description: 'Final health status (Healthy, Progressing, Degraded, Suspended, etc.)'
     value: ${{ steps.wait-healthy.outputs.health_status }}
   sync_status:
     description: 'Final sync status (Synced, OutOfSync, etc.)'
     value: ${{ steps.wait-healthy.outputs.sync_status }}
+  preview_url:
+    description: 'Preview URL when blue-green is enabled (Suspended state). Empty for standard deployments.'
+    value: ${{ steps.wait-healthy.outputs.preview_url }}
 
 runs:
   using: 'composite'
@@ -91,6 +94,7 @@ runs:
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         TIMEOUT: ${{ inputs.wait_timeout }}
+        NAMESPACE: ${{ steps.deploy.outputs.namespace }}
       run: bash ${{ github.action_path }}/wait-healthy.sh
 
     - name: Set final status

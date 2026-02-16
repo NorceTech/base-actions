@@ -67,6 +67,40 @@ while true; do
     LAST_STATUS="$STATUS_LINE"
   fi
 
+  # Suspended = blue-green preview deployed, waiting for manual promotion.
+  # This is the expected end state when preview/blue-green is enabled.
+  # The reported tag may still be the old stable tag (ArgoCD reports stable image),
+  # so we don't require tag match — Suspended after sync means the preview is ready.
+  if [ "$HEALTH" == "Suspended" ]; then
+    if [ "$SYNC" == "Synced" ]; then
+      # Derive preview URL from namespace: {partner}-{customer}-{env}
+      # Preview URL: preview-{customer}-{env}.{partner}.base.norce.tech
+      PREVIEW_URL=""
+      if [ -n "${NAMESPACE:-}" ]; then
+        # Extract partner (first segment) and the rest (customer-environment)
+        PARTNER=$(echo "$NAMESPACE" | cut -d'-' -f1)
+        CUSTOMER_ENV=$(echo "$NAMESPACE" | cut -d'-' -f2-)
+        PREVIEW_URL="https://preview-${CUSTOMER_ENV}.${PARTNER}.base.norce.tech"
+      fi
+
+      echo "::endgroup::"
+      echo "✅ Preview deployed and awaiting promotion! (${ELAPSED}s)"
+      if [ -n "$PREVIEW_URL" ]; then
+        echo "   Preview URL: $PREVIEW_URL"
+      fi
+      echo "   Promote via Base Portal or API when ready."
+      echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
+      echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
+      echo "healthy=true" >> $GITHUB_OUTPUT
+      echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+      exit 0
+    fi
+
+    # Suspended but not yet synced — give ArgoCD time
+    sleep $POLL_INTERVAL
+    continue
+  fi
+
   if [ "$HEALTH" == "Healthy" ] && [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
     if [ "$SYNC" == "Synced" ]; then
       echo "::endgroup::"
