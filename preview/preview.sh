@@ -15,7 +15,8 @@ with open(os.environ['CONFIG_FILE']) as f:
 " 2>/dev/null || echo "{}")
   fi
 else
-  CONFIG="${CONFIG:-{}}"
+  DEFAULT_CONFIG='{}'
+  CONFIG="${CONFIG:-$DEFAULT_CONFIG}"
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
@@ -30,7 +31,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
     --arg commit_sha "${COMMIT_SHA:-}" \
     --arg pr_title "${PR_TITLE:-}" \
     --arg pr_url "${PR_URL:-}" \
-    --argjson config "${CONFIG:-{}}" \
+    --argjson config "${CONFIG}" \
     '{
       action: $action,
       customer: $customer,
