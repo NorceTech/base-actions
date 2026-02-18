@@ -7,8 +7,8 @@ branding:
   color: 'orange'
 
 inputs:
-  customer:
-    description: 'Customer name (defaults to repository name)'
+  app:
+    description: 'App name (defaults to repository name)'
     required: false
   environment:
     description: 'Sync only this environment (default: sync all environments in the file)'
@@ -45,7 +45,7 @@ runs:
       env:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
-        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        APP: ${{ inputs.app || github.event.repository.name }}
         SECRETS_FILE: ${{ inputs.secrets_file }}
         TARGET_ENV: ${{ inputs.environment }}
       run: bash ${{ github.action_path }}/sync-secrets.sh

@@ -158,8 +158,8 @@ environments:
       keyvault: stripe-secret-key
 ```
 
-- **Global secrets** (`environments.global`) are stored as `customer-shared-api-key` (no env prefix)
-- **Per-environment secrets** (`environments.<env>`) are stored as `customer-stage-database-password`, `customer-prod-database-password`
+- **Global secrets** (`environments.global`) are stored as `app-shared-api-key` (no env prefix)
+- **Per-environment secrets** (`environments.<env>`) are stored as `app-stage-database-password`, `app-prod-database-password`
 - Global secrets always sync, even when targeting a specific environment
 - Legacy format: a top-level `secrets:` key is also supported as an alias for `environments.global`
 
@@ -190,12 +190,12 @@ jobs:
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
-You can sync only a specific environment, or set a custom customer name:
+You can sync only a specific environment, or set a custom app name:
 
 ```yaml
       - uses: NorceTech/base-actions/sync-secrets@v1
         with:
-          customer: my-customer    # defaults to repo name
+          app: my-app              # defaults to repo name
           environment: prod        # only sync prod secrets (global secrets always sync)
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
@@ -204,7 +204,7 @@ Each `env:` name must match a `github` field in the mapping file. Secrets not fo
 
 ### Deploy with Custom Image Name
 
-When the container image name differs from the customer name, use the `image` input:
+When the container image name differs from the app name, use the `image` input:
 
 ```yaml
   deploy:
@@ -215,14 +215,14 @@ When the container image name differs from the customer name, use the `image` in
           sparse-checkout: .base
       - uses: NorceTech/base-actions/deploy@v1
         with:
-          customer: my-customer
-          environment: my-app
-          image: my-app              # Uses image "my-app" instead of "my-customer"
+          app: my-app
+          environment: my-env
+          image: my-image            # Uses image "my-image" instead of "my-app"
           image_tag: ${{ needs.build.outputs.image_tag }}
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
-This deploys the image `my-app:<tag>` instead of `my-customer:<tag>`.
+This deploys the image `my-image:<tag>` instead of `my-app:<tag>`.
 
 ### Deploy with All Inputs
 
@@ -239,7 +239,7 @@ This deploys the image `my-app:<tag>` instead of `my-customer:<tag>`.
         with:
           environment: prod
           image_tag: ${{ needs.build.outputs.image_tag }}
-          customer: my-customer
+          app: my-app
           image: my-image
           config_file: .base/config.yaml
           api_url: https://base-api.norce.tech
@@ -317,8 +317,8 @@ environments:
 |-------|----------|---------|-------------|
 | `environment` | Yes | - | Target environment (stage, prod, etc.) |
 | `image_tag` | Yes | - | Image tag to deploy |
-| `customer` | No | repo name | Customer name |
-| `image` | No | customer name | Container image name (when image name differs from customer) |
+| `app` | No | repo name | App name |
+| `image` | No | app name | Container image name (when image name differs from app) |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
@@ -341,7 +341,7 @@ environments:
 |-------|----------|---------|-------------|
 | `action` | Yes | - | Action: create, update, delete |
 | `image_tag` | No | - | Image tag (not needed for delete) |
-| `customer` | No | repo name | Customer name |
+| `app` | No | repo name | App name |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
@@ -360,7 +360,7 @@ environments:
 |-------|----------|---------|-------------|
 | `from_environment` | Yes | - | Source environment |
 | `to_environment` | Yes | - | Target environment |
-| `customer` | No | repo name | Customer name |
+| `app` | No | repo name | App name |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 
@@ -377,7 +377,7 @@ environments:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `customer` | No | repo name | Customer name |
+| `app` | No | repo name | App name |
 | `environment` | No | all | Sync only this environment (default: all) |
 | `secrets_file` | No | `.base/secrets.yaml` | Path to secrets mapping file |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
@@ -450,7 +450,7 @@ The actions call the following endpoints:
 
 ## Multi-Brand / Multi-Site Deployments
 
-If you manage multiple brands or sites from a single codebase (e.g., `brand-a.com` and `brand-b.com`), use **one customer with multiple environments** rather than creating separate customers per brand. This gives you:
+If you manage multiple brands or sites from a single codebase (e.g., `brand-a.com` and `brand-b.com`), use **one app with multiple environments** rather than creating separate apps per brand. This gives you:
 
 - **Shared container image** — one build, deployed to all sites
 - **Global config/secrets** — shared settings applied everywhere
@@ -459,7 +459,7 @@ If you manage multiple brands or sites from a single codebase (e.g., `brand-a.co
 ### Architecture
 
 ```
-Customer: my-brand-group (single codebase, single container image)
+App: my-brand-group (single codebase, single container image)
 ├── brand-a-stage   (domain: stage.brand-a.com)
 ├── brand-a-prod    (domain: www.brand-a.com)
 ├── brand-b-stage   (domain: stage.brand-b.com)
@@ -468,7 +468,7 @@ Customer: my-brand-group (single codebase, single container image)
 
 Each environment gets its own Kubernetes namespace, deployment, secrets, and domain.
 
-### Configuration
+### Config
 
 ```yaml
 # .base/config.yaml
@@ -611,7 +611,7 @@ jobs:
           sparse-checkout: .base
       - uses: NorceTech/base-actions/deploy@v1
         with:
-          customer: my-brand-group
+          app: my-brand-group
           environment: ${{ matrix.environment }}
           image_tag: ${{ needs.build.outputs.image_tag }}
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
@@ -629,7 +629,7 @@ jobs:
           sparse-checkout: .base
       - uses: NorceTech/base-actions/deploy@v1
         with:
-          customer: my-brand-group
+          app: my-brand-group
           environment: ${{ matrix.environment }}
           image_tag: ${{ needs.build.outputs.image_tag }}
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
@@ -639,9 +639,9 @@ jobs:
 
 | Concept | Base Platform |
 |---------|---------------|
-| Brand group | Customer (e.g., `my-brand-group`) |
+| Brand group | App (e.g., `my-brand-group`) |
 | Brand + env | Environment (e.g., `brand-a-prod`) |
-| Shared image | One container image per customer |
+| Shared image | One container image per app |
 | Global secrets | `environments.global` in `.base/secrets.yaml` |
 | Per-brand secrets | `environments.<brand>-<env>` in `.base/secrets.yaml` |
 | Global config | `environments.global.env` in `.base/config.yaml` |

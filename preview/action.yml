@@ -13,8 +13,8 @@ inputs:
   image_tag:
     description: 'Image tag for the preview (not needed for delete)'
     required: false
-  customer:
-    description: 'Customer name (defaults to repository name)'
+  app:
+    description: 'App name (defaults to repository name)'
     required: false
   config_file:
     description: 'Path to config file'
@@ -54,7 +54,7 @@ runs:
       env:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
-        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        APP: ${{ inputs.app || github.event.repository.name }}
         ACTION: ${{ inputs.action }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         PR_NUMBER: ${{ github.event.pull_request.number }}

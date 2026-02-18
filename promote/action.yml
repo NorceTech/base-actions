@@ -7,8 +7,8 @@ branding:
   color: 'green'
 
 inputs:
-  customer:
-    description: 'Customer name (defaults to repository name)'
+  app:
+    description: 'App name (defaults to repository name)'
     required: false
   from_environment:
     description: 'Source environment to promote from'
@@ -53,7 +53,7 @@ runs:
       env:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
-        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        APP: ${{ inputs.app || github.event.repository.name }}
         FROM_ENV: ${{ inputs.from_environment }}
         TO_ENV: ${{ inputs.to_environment }}
       run: bash ${{ github.action_path }}/promote.sh

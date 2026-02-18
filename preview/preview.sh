@@ -23,7 +23,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
     --arg action "$ACTION" \
-    --arg customer "$CUSTOMER" \
+    --arg customer "$APP" \
     --argjson pr_number "${PR_NUMBER:-0}" \
     --arg pr_branch "${PR_BRANCH:-}" \
     --arg image_tag "${IMAGE_TAG:-}" \

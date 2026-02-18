@@ -40,7 +40,7 @@ while true; do
   fi
 
   RESPONSE=$(curl -s -w "\n%{http_code}" \
-    "${API_URL}/api/v1/deploy/status?customer=${CUSTOMER}&environment=${ENVIRONMENT}" \
+    "${API_URL}/api/v1/deploy/status?customer=${APP}&environment=${ENVIRONMENT}" \
     -H "Authorization: Bearer ${API_KEY}")
 
   HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -73,13 +73,13 @@ while true; do
   # (only the preview has the new one), so we don't require Synced or tag match.
   # Suspended itself confirms ArgoCD picked up the change and the preview is ready.
   if [ "$HEALTH" == "Suspended" ]; then
-    # Derive preview URL from namespace: {partner}-{customer}-{env}
-    # Preview URL: preview-{customer}-{env}.{partner}.base.norce.tech
+    # Derive preview URL from namespace: {partner}-{app}-{env}
+    # Preview URL: preview-{app}-{env}.{partner}.base.norce.tech
     PREVIEW_URL=""
     if [ -n "${NAMESPACE:-}" ]; then
       PARTNER=$(echo "$NAMESPACE" | cut -d'-' -f1)
-      CUSTOMER_ENV=$(echo "$NAMESPACE" | cut -d'-' -f2-)
-      PREVIEW_URL="https://preview-${CUSTOMER_ENV}.${PARTNER}.base.norce.tech"
+      APP_ENV=$(echo "$NAMESPACE" | cut -d'-' -f2-)
+      PREVIEW_URL="https://preview-${APP_ENV}.${PARTNER}.base.norce.tech"
     fi
 
     echo "::endgroup::"

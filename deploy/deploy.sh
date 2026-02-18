@@ -37,7 +37,7 @@ fi
 
 BODY=$(jq -n \
   --arg action "deploy" \
-  --arg customer "$CUSTOMER" \
+  --arg customer "$APP" \
   --arg environment "$ENVIRONMENT" \
   --arg image_tag "$IMAGE_TAG" \
   --arg commit_sha "$COMMIT_SHA" \
@@ -49,7 +49,7 @@ BODY=$(jq -n \
     commit_sha: $commit_sha
   }')
 
-# Add image field if specified (overrides customer name as ACR repository)
+# Add image field if specified (overrides app name as ACR repository)
 if [ -n "${IMAGE:-}" ]; then
   BODY=$(echo "$BODY" | jq --arg image "$IMAGE" '. + {image: $image}')
 fi
@@ -99,8 +99,8 @@ if [ "$HTTP_CODE" -ne 200 ]; then
       ;;
     403)
       echo "║"
-      echo "║ 🔒 Fix: The customer name '$CUSTOMER' was not found."
-      echo "║   Check that the 'customer' input matches the exact name"
+      echo "║ 🔒 Fix: The app name '$APP' was not found."
+      echo "║   Check that the 'app' input matches the exact name"
       echo "║   registered in the Base Portal. If not set, it defaults"
       echo "║   to the repository name: '${REPO_NAME}'."
       ;;
@@ -123,7 +123,7 @@ if [ "$HTTP_CODE" -ne 200 ]; then
   esac
 
   echo "║"
-  echo "║ Customer:    $CUSTOMER"
+  echo "║ App:         $APP"
   echo "║ Environment: $ENVIRONMENT"
   echo "║ Image Tag:   $IMAGE_TAG"
   if [ -n "$REQUEST_ID" ]; then

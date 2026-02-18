@@ -6,7 +6,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
     --arg action "promote" \
-    --arg customer "$CUSTOMER" \
+    --arg customer "$APP" \
     --arg from_environment "$FROM_ENV" \
     --arg environment "$TO_ENV" \
     --arg image_tag "ignored" \

@@ -13,11 +13,11 @@ inputs:
   image_tag:
     description: 'Image tag to deploy'
     required: true
-  customer:
-    description: 'Customer name (defaults to repository name)'
+  app:
+    description: 'App name (defaults to repository name)'
     required: false
   image:
-    description: 'Container image name (defaults to customer name). Use when the image name differs from the customer name.'
+    description: 'Container image name (defaults to app name). Use when the image name differs from the app name.'
     required: false
   config_file:
     description: 'Path to config file'
@@ -74,7 +74,7 @@ runs:
       env:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
-        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        APP: ${{ inputs.app || github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         IMAGE: ${{ inputs.image }}
@@ -90,7 +90,7 @@ runs:
       env:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
-        CUSTOMER: ${{ inputs.customer || github.event.repository.name }}
+        APP: ${{ inputs.app || github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         TIMEOUT: ${{ inputs.wait_timeout }}

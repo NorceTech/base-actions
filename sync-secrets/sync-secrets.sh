@@ -76,7 +76,7 @@ sync_env_secrets() {
   fi
 
   local BODY=$(jq -n \
-    --arg customer "$CUSTOMER" \
+    --arg customer "$APP" \
     --arg environment "$ENV_NAME" \
     --argjson secrets "$SECRETS_JSON" \
     '{ customer: $customer, environment: $environment, secrets: $secrets }')
