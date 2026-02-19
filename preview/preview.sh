@@ -2,21 +2,26 @@
 set -euo pipefail
 
 # Read preview config from YAML (skip for delete)
+# Merges global.env + preview.env so preview inherits shared env vars
 if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
-    CONFIG=$(yq -o=json ".environments.preview // {}" "$CONFIG_FILE")
+    GLOBAL_ENV=$(yq -o=json '.environments.global.env // []' "$CONFIG_FILE")
+    PREVIEW_CONFIG=$(yq -o=json '.environments.preview // {}' "$CONFIG_FILE")
+    # Concatenate: global env first, preview env last (K8s uses last value for dupes)
+    CONFIG=$(echo "$PREVIEW_CONFIG" | jq --argjson global "$GLOBAL_ENV" '.env = ($global + (.env // []))')
   else
     CONFIG=$(python3 -c "
-import yaml, json, os, sys
+import yaml, json, os
 with open(os.environ['CONFIG_FILE']) as f:
     data = yaml.safe_load(f)
-    env_config = data.get('environments', {}).get('preview', {})
-    print(json.dumps(env_config))
+    global_env = data.get('environments', {}).get('global', {}).get('env', [])
+    preview = data.get('environments', {}).get('preview', {})
+    preview['env'] = global_env + preview.get('env', [])
+    print(json.dumps(preview))
 " 2>/dev/null || echo "{}")
   fi
 else
-  DEFAULT_CONFIG='{}'
-  CONFIG="${CONFIG:-$DEFAULT_CONFIG}"
+  CONFIG='{}'
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/preview" \
