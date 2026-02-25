@@ -65,51 +65,5 @@ runs:
         CONFIG_FILE: ${{ inputs.config_file }}
       run: bash ${{ github.action_path }}/preview.sh
 
-    - name: Comment on PR
-      if: inputs.action != 'delete' && steps.preview.outputs.preview_url != ''
-      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-      env:
-        PREVIEW_URL: ${{ steps.preview.outputs.preview_url }}
-        HEAD_REF: ${{ github.head_ref }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      with:
-        script: |
-          const previewUrl = process.env.PREVIEW_URL;
-          if (!previewUrl) return;
-
-          const headRef = process.env.HEAD_REF;
-          const headSha = process.env.HEAD_SHA;
-
-          const body = `## Preview Environment
-
-          | | |
-          |---|---|
-          | **URL** | [${previewUrl}](${previewUrl}) |
-          | **Branch** | \`${headRef}\` |
-          | **Commit** | \`${headSha}\` |
-
-          > Preview available in ~2-3 minutes. Auto-deleted when PR closes.`;
-
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-
-          const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes('Preview Environment'));
-
-          if (existing) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: existing.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-          }
+    # PR comments are handled by the norce-base GitHub App (via backend callbacks)
+    # The bot posts: pending → ready (when healthy) → deleted (when PR closes)
