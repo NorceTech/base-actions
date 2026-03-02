@@ -7,14 +7,48 @@ GLOBAL_ENV="[]"
 
 if [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
-    CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+    # Check for config inheritance (e.g., pre-prod inherits from prod)
+    INHERITS=$(yq -r ".environments.$ENVIRONMENT.inherits // \"\"" "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [ -n "$INHERITS" ]; then
+      PARENT_CONFIG=$(yq -o=json -I=0 ".environments.$INHERITS // {}" "$CONFIG_FILE")
+      CHILD_CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+      # Remove inherits key from child before merging
+      CHILD_CONFIG=$(echo "$CHILD_CONFIG" | jq 'del(.inherits)')
+      # Deep merge: parent as base, child overrides scalar/object fields
+      # For env arrays: merge by name (child wins on name conflict)
+      CONFIG=$(jq -n --argjson parent "$PARENT_CONFIG" --argjson child "$CHILD_CONFIG" '
+        ($parent * ($child | del(.env))) as $merged |
+        if ($child.env // null) != null then
+          $merged | .env = (($parent.env // []) + $child.env | group_by(.name) | map(last))
+        elif ($parent.env // null) != null then
+          $merged
+        else
+          $merged
+        end
+      ')
+    else
+      CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT // {}" "$CONFIG_FILE")
+    fi
     GLOBAL_ENV=$(yq -o=json -I=0 ".environments.global.env // []" "$CONFIG_FILE")
   else
     CONFIG=$(python3 -c "
 import yaml, json, os, sys
 with open(os.environ['CONFIG_FILE']) as f:
     data = yaml.safe_load(f)
-    env_config = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {})
+    envs = data.get('environments', {})
+    env_config = envs.get(os.environ['ENVIRONMENT'], {})
+    # Handle config inheritance
+    inherits = env_config.get('inherits')
+    if inherits:
+        parent = envs.get(inherits, {})
+        child = {k: v for k, v in env_config.items() if k != 'inherits'}
+        merged = {**parent, **{k: v for k, v in child.items() if k != 'env'}}
+        if 'env' in child:
+            parent_env = {e['name']: e for e in parent.get('env', [])}
+            for e in child['env']:
+                parent_env[e['name']] = e
+            merged['env'] = list(parent_env.values())
+        env_config = merged
     print(json.dumps(env_config, separators=(',', ':')))
 " 2>/dev/null || echo "{}")
     GLOBAL_ENV=$(python3 -c "
