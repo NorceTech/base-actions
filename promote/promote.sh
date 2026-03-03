@@ -1,6 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Validate environment names
+ALLOWED_ENVS="dev test stage pre-prod prod preview"
+validate_env() {
+  local env="$1"
+  local label="$2"
+  if [[ "$env" =~ ^(pr-|preview-|feature-|branch-) ]]; then
+    return 0
+  fi
+  for allowed in $ALLOWED_ENVS; do
+    if [ "$env" = "$allowed" ]; then
+      return 0
+    fi
+  done
+  echo ""
+  echo "::error::Invalid ${label} name: '${env}'"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ INVALID ENVIRONMENT NAME: '${env}'"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ Allowed environment names:"
+  echo "║   dev, test, stage, pre-prod, prod, preview, pr-*"
+  echo "║"
+  echo "║ Common mistakes:"
+  echo "║   staging  → use 'stage' instead"
+  echo "║   production → use 'prod' instead"
+  echo "║   development → use 'dev' instead"
+  echo "║"
+  echo "║ Check your workflow file or .base/config.yaml"
+  echo "╚══════════════════════════════════════════════════════"
+  exit 1
+}
+
+validate_env "$FROM_ENV" "from_environment"
+validate_env "$TO_ENV" "to_environment"
+
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
