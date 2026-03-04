@@ -87,7 +87,7 @@ while true; do
     if [ -n "$PREVIEW_URL" ]; then
       echo "   Preview URL: $PREVIEW_URL"
     fi
-    echo "   Promote via Base Portal or API when ready."
+    echo "   Promote via Base Portal or CI/CD when ready."
     echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
     echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
     echo "healthy=true" >> $GITHUB_OUTPUT
