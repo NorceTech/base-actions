@@ -248,6 +248,29 @@ This deploys the image `my-image:<tag>` instead of `my-app:<tag>`.
           wait_timeout: '600'
 ```
 
+## Environment Model
+
+### Named Environments
+
+The platform supports four named environments:
+
+| Name | Type | Purpose |
+|------|------|---------|
+| `dev` | development | Development/local testing |
+| `test` | staging | Integration testing |
+| `stage` | staging | Pre-production testing |
+| `prod` | production | Live production |
+
+### PR Environments (ephemeral)
+
+Pattern-based names that are auto-created per PR and auto-deleted when the PR closes:
+
+`pr-*`, `preview-*`, `feature-*`, `branch-*`
+
+### Staged Deployment
+
+Any named environment can use staged deployment (`autoPromote: false` in portal settings). This deploys a canary version accessible on a preview URL. After testing, promote to make it live.
+
 ## Configuration
 
 Create `.base/config.yaml` in your repository. Use `environments.global` for env vars shared across all environments, and per-environment sections for environment-specific settings:
@@ -263,13 +286,6 @@ environments:
         value: '0.0.0.0'
 
   # Per-environment config
-  preview:
-    replicas: 1
-    resources:
-      limits:
-        cpu: 100m
-        memory: 128Mi
-
   stage:
     replicas: 1
     containerPort: 3000              # default, can be omitted
@@ -282,6 +298,10 @@ environments:
     env:
       - name: LOG_LEVEL
         value: debug
+    preview:                         # Overrides applied during staged deployments on stage
+      env:
+        - name: DEBUG
+          value: 'true'
 
   prod:
     replicas: 3
@@ -299,15 +319,64 @@ environments:
     env:
       - name: LOG_LEVEL
         value: warn
+    preview:                         # Overrides applied during staged deployments on prod
+      env:
+        - name: CANARY_METRICS
+          value: 'enabled'
+
+  # Config scope for PR environments (not a named environment)
+  preview:
+    inherits: stage                  # Inherit stage config as base
+    replicas: 1
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    env:
+      - name: PREVIEW
+        value: 'true'
 ```
+
+### Config Resolution
+
+| Scenario | Resolution Order |
+|----------|-----------------|
+| Named env deploy | `global` + `<env>` |
+| Staged deployment | `global` + `<env>` + `<env>.preview` overrides |
+| PR environment | `global` + `<inherited-env>` + `preview` overrides |
+
+### Key Notes
 
 - **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
 - **Per-environment env vars** override globals if they share the same name
+- **`environments.preview`** is a config scope for PR environments, NOT a named environment. Use `inherits` to base PR config on a named environment.
+- **`<env>.preview`** is a nested key for staged deployment overrides on that specific environment (e.g., `prod.preview.env` applies during staged deployments on prod)
 - Resources, replicas, and autoscaling are always per-environment
 - **`healthCheckPath`** — HTTP readiness probe path. Default is TCP port check (safe for auth-protected apps). Only set if your app has a public health endpoint returning HTTP 200.
 - **`startupGracePeriod`** — Seconds to wait for app startup (default: 300, range: 10–900). Increase for slow-starting apps like large Next.js SSR builds.
 - **`containerPort`** — Port your app listens on (default: 3000). Updates Deployment containerPort and Service targetPort.
 - **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
+
+### Secrets
+
+Secrets are managed in Azure KeyVault with tag-based scoping:
+
+| Tag | Scope |
+|-----|-------|
+| `environment=all` | All environments |
+| `environment=<env>` | Specific environment (e.g., `environment=prod`) |
+| `environment=preview` | All PR environments |
+
+Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
+
+## How It Works
+
+1. Your workflow calls the action with deployment parameters
+2. Action reads config from `.base/config.yaml` (if present)
+3. Action calls the Base Platform API (partner identified by API key)
+4. Base Platform updates the deployment configuration
+5. Changes are synced to your cluster
+6. Action polls for deployment health status (if `wait_for_healthy: true`)
 
 ## Action Reference
 
@@ -334,6 +403,44 @@ environments:
 | `message` | Result message |
 | `health_status` | Final health status (Healthy, Progressing, Degraded, Timeout) |
 | `sync_status` | Final sync status |
+
+#### Health Status Polling
+
+By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status.
+
+**What it checks:**
+- Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
+- Image tag matches the deployed tag
+
+**Example output:**
+```
+⏳ Waiting for deployment to become healthy (timeout: 300s)...
+  [10s] Health: Progressing, Tag: main-bc5059
+  [20s] Health: Progressing, Tag: main-bc5059
+  [35s] Health: Healthy, Tag: main-bc5059
+
+✅ Deployment healthy and synced! (35s)
+```
+
+**Disable health polling** (not recommended):
+```yaml
+- uses: NorceTech/base-actions/deploy@v1
+  with:
+    environment: stage
+    image_tag: ${{ steps.tag.outputs.tag }}
+    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+    wait_for_healthy: 'false'
+```
+
+**Adjust timeout:**
+```yaml
+- uses: NorceTech/base-actions/deploy@v1
+  with:
+    environment: prod
+    image_tag: ${{ steps.tag.outputs.tag }}
+    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+    wait_timeout: '600'  # 10 minutes for larger deployments
+```
 
 ### `preview`
 
@@ -388,53 +495,6 @@ environments:
 | `synced_count` | Number of secrets successfully synced |
 | `failed_count` | Number of secrets that failed to sync |
 | `synced_names` | Comma-separated list of synced secret names |
-
-## How It Works
-
-1. Your workflow calls the action with deployment parameters
-2. Action reads config from `.base/config.yaml` (if present)
-3. Action calls the Base Platform API (partner identified by API key)
-4. Base Platform updates the deployment configuration
-5. Changes are synced to your cluster
-6. Action polls for deployment health status (if `wait_for_healthy: true`)
-
-## Health Status Polling
-
-By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status.
-
-**What it checks:**
-- Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
-- Image tag matches the deployed tag
-
-**Example output:**
-```
-⏳ Waiting for deployment to become healthy (timeout: 300s)...
-  [10s] Health: Progressing, Tag: main-bc5059
-  [20s] Health: Progressing, Tag: main-bc5059
-  [35s] Health: Healthy, Tag: main-bc5059
-
-✅ Deployment healthy and synced! (35s)
-```
-
-**Disable health polling** (not recommended):
-```yaml
-- uses: NorceTech/base-actions/deploy@v1
-  with:
-    environment: stage
-    image_tag: ${{ steps.tag.outputs.tag }}
-    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
-    wait_for_healthy: 'false'
-```
-
-**Adjust timeout:**
-```yaml
-- uses: NorceTech/base-actions/deploy@v1
-  with:
-    environment: prod
-    image_tag: ${{ steps.tag.outputs.tag }}
-    api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
-    wait_timeout: '600'  # 10 minutes for larger deployments
-```
 
 ## API Endpoints
 

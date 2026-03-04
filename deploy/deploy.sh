@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Validate environment name
-ALLOWED_ENVS="dev test stage pre-prod prod preview"
+ALLOWED_ENVS="dev test stage prod"
 validate_env() {
   local env="$1"
   local label="$2"
@@ -23,7 +23,7 @@ validate_env() {
   echo "╠══════════════════════════════════════════════════════"
   echo "║"
   echo "║ Allowed environment names:"
-  echo "║   dev, test, stage, pre-prod, prod, preview, pr-*"
+  echo "║   dev, test, stage, prod, pr-*"
   echo "║"
   echo "║ Common mistakes:"
   echo "║   staging  → use 'stage' instead"
@@ -43,7 +43,7 @@ GLOBAL_ENV="[]"
 
 if [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
-    # Check for config inheritance (e.g., pre-prod inherits from prod)
+    # Check for config inheritance (e.g., stage inherits from dev)
     INHERITS=$(yq -r ".environments.$ENVIRONMENT.inherits // \"\"" "$CONFIG_FILE" 2>/dev/null || echo "")
     if [ -n "$INHERITS" ]; then
       PARENT_CONFIG=$(yq -o=json -I=0 ".environments.$INHERITS // {}" "$CONFIG_FILE")
@@ -105,6 +105,23 @@ if [ "$GLOBAL_ENV" != "[]" ]; then
   CONFIG=$(echo "$CONFIG" | jq --argjson merged "$MERGED_ENV" '.env = $merged')
 fi
 
+# Read per-environment preview config (for staged deployments)
+# e.g., environments.prod.preview.env overrides during staged deploy on prod
+PREVIEW_CONFIG="{}"
+if [ -f "$CONFIG_FILE" ]; then
+  if command -v yq &> /dev/null; then
+    PREVIEW_CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT.preview // {}" "$CONFIG_FILE" 2>/dev/null || echo "{}")
+  else
+    PREVIEW_CONFIG=$(python3 -c "
+import yaml, json, os
+with open(os.environ['CONFIG_FILE']) as f:
+    data = yaml.safe_load(f)
+    preview = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {}).get('preview', {})
+    print(json.dumps(preview, separators=(',', ':')))
+" 2>/dev/null || echo "{}")
+  fi
+fi
+
 BODY=$(jq -n \
   --arg action "deploy" \
   --arg customer "$APP" \
@@ -131,6 +148,11 @@ fi
 # Send global env vars separately so the backend can save them under environment="all"
 if [ "$GLOBAL_ENV" != "[]" ]; then
   BODY=$(echo "$BODY" | jq --argjson global_env "$GLOBAL_ENV" '. + {global_env: $global_env}')
+fi
+
+# Send per-environment preview config for staged deployments
+if [ "$PREVIEW_CONFIG" != "{}" ]; then
+  BODY=$(echo "$BODY" | jq --argjson preview_config "$PREVIEW_CONFIG" '. + {preview_config: $preview_config}')
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \

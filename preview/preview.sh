@@ -2,22 +2,60 @@
 set -euo pipefail
 
 # Read preview config from YAML (skip for delete)
-# Merges global.env + preview.env so preview inherits shared env vars
+# Config resolution (three-layer): global → inherited env → preview overrides
 if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
-    GLOBAL_ENV=$(yq -o=json '.environments.global.env // []' "$CONFIG_FILE")
-    PREVIEW_CONFIG=$(yq -o=json '.environments.preview // {}' "$CONFIG_FILE")
-    # Concatenate: global env first, preview env last (K8s uses last value for dupes)
-    CONFIG=$(echo "$PREVIEW_CONFIG" | jq --argjson global "$GLOBAL_ENV" '.env = ($global + (.env // []))')
+    GLOBAL_ENV=$(yq -o=json -I=0 '.environments.global.env // []' "$CONFIG_FILE")
+    PREVIEW_CONFIG=$(yq -o=json -I=0 '.environments.preview // {}' "$CONFIG_FILE")
+
+    # Check for config inheritance (e.g., preview.inherits: stage)
+    INHERITS=$(yq -r '.environments.preview.inherits // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [ -n "$INHERITS" ]; then
+      PARENT_CONFIG=$(yq -o=json -I=0 ".environments.$INHERITS // {}" "$CONFIG_FILE")
+      CHILD_CONFIG=$(echo "$PREVIEW_CONFIG" | jq 'del(.inherits)')
+      # Deep merge: parent as base, preview overrides scalar/object fields
+      # For env arrays: merge by name (preview wins on name conflict)
+      PREVIEW_CONFIG=$(jq -n --argjson parent "$PARENT_CONFIG" --argjson child "$CHILD_CONFIG" '
+        ($parent * ($child | del(.env))) as $merged |
+        if ($child.env // null) != null then
+          $merged | .env = (($parent.env // []) + $child.env | group_by(.name) | map(last))
+        elif ($parent.env // null) != null then
+          $merged
+        else
+          $merged
+        end
+      ')
+    fi
+
+    # Merge global env vars: global first, then inherited+preview (last value wins)
+    CONFIG=$(echo "$PREVIEW_CONFIG" | jq --argjson global "$GLOBAL_ENV" \
+      '.env = (($global + (.env // [])) | group_by(.name) | map(last))')
   else
     CONFIG=$(python3 -c "
 import yaml, json, os
 with open(os.environ['CONFIG_FILE']) as f:
     data = yaml.safe_load(f)
-    global_env = data.get('environments', {}).get('global', {}).get('env', [])
-    preview = data.get('environments', {}).get('preview', {})
-    preview['env'] = global_env + preview.get('env', [])
-    print(json.dumps(preview))
+    envs = data.get('environments', {})
+    global_env = envs.get('global', {}).get('env', [])
+    preview = dict(envs.get('preview', {}))
+    # Handle config inheritance
+    inherits = preview.pop('inherits', None)
+    if inherits:
+        parent = dict(envs.get(inherits, {}))
+        child_env = preview.pop('env', None)
+        merged = {**parent, **{k: v for k, v in preview.items() if k != 'env'}}
+        if child_env is not None:
+            parent_env = {e['name']: e for e in parent.get('env', [])}
+            for e in child_env:
+                parent_env[e['name']] = e
+            merged['env'] = list(parent_env.values())
+        preview = merged
+    # Merge global env vars (global first, preview overrides)
+    merged_env = {e['name']: e for e in global_env}
+    for e in preview.get('env', []):
+        merged_env[e['name']] = e
+    preview['env'] = list(merged_env.values())
+    print(json.dumps(preview, separators=(',', ':')))
 " 2>/dev/null || echo "{}")
   fi
 else

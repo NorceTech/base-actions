@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Validate environment names
-ALLOWED_ENVS="dev test stage pre-prod prod preview"
+ALLOWED_ENVS="dev test stage prod"
 validate_env() {
   local env="$1"
   local label="$2"
@@ -22,7 +22,7 @@ validate_env() {
   echo "╠══════════════════════════════════════════════════════"
   echo "║"
   echo "║ Allowed environment names:"
-  echo "║   dev, test, stage, pre-prod, prod, preview, pr-*"
+  echo "║   dev, test, stage, prod, pr-*"
   echo "║"
   echo "║ Common mistakes:"
   echo "║   staging  → use 'stage' instead"
