@@ -106,17 +106,13 @@ fi
 
 SUCCESS=$(echo "$BODY" | jq -r '.data.success // false')
 PREVIEW_URL=$(echo "$BODY" | jq -r '.data.previewUrl // empty')
-NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
-GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')
 MESSAGE=$(echo "$BODY" | jq -r '.data.message // empty')
 
 echo "success=$SUCCESS" >> $GITHUB_OUTPUT
 echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
-echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
-echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
 echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
 if [ -n "$PREVIEW_URL" ]; then
-  echo "Preview URL: $PREVIEW_URL"
+  echo "PR Environment URL: $PREVIEW_URL"
 fi
 echo "$MESSAGE"

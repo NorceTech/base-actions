@@ -7,7 +7,7 @@ Official GitHub Actions for deploying to the Norce Base Platform.
 | Action | Description |
 |--------|-------------|
 | `NorceTech/base-actions/deploy` | Deploy to any environment |
-| `NorceTech/base-actions/preview` | Manage PR ephemeral environments (pr-*) |
+| `NorceTech/base-actions/pr` | Manage PR environments |
 | `NorceTech/base-actions/promote` | Promote between environments |
 | `NorceTech/base-actions/sync-secrets` | Sync GitHub Secrets to your secure vault |
 
@@ -70,10 +70,10 @@ jobs:
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
-### PR Preview Environments
+### PR Environments
 
 ```yaml
-name: PR Preview
+name: PR Environment
 
 on:
   pull_request:
@@ -91,7 +91,7 @@ jobs:
         run: |
           # Build with tag pr-<number>
 
-  preview:
+  pr:
     needs: build
     if: always()
     runs-on: ubuntu-latest
@@ -102,7 +102,7 @@ jobs:
         if: github.event.action != 'closed'
         with:
           sparse-checkout: .base
-      - uses: NorceTech/base-actions/preview@v1
+      - uses: NorceTech/base-actions/pr@v1
         with:
           action: ${{ github.event.action == 'closed' && 'delete' || (github.event.action == 'opened' && 'create' || 'update') }}
           image_tag: ${{ needs.build.outputs.image_tag }}
@@ -536,7 +536,7 @@ By default, the deploy action waits for your deployment to become healthy before
     wait_timeout: '600'  # 10 minutes for larger deployments
 ```
 
-### `preview` (PR environments)
+### `pr` (PR environments)
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -550,9 +550,7 @@ By default, the deploy action waits for your deployment to become healthy before
 | Output | Description |
 |--------|-------------|
 | `success` | Whether action succeeded |
-| `preview_url` | URL of the preview environment |
-| `namespace` | Deployment namespace |
-| `git_commit_sha` | Commit SHA for the deployment |
+| `preview_url` | URL of the PR environment |
 | `message` | Result message |
 
 ### `promote`
@@ -604,7 +602,7 @@ The actions call the following endpoints:
 |--------|----------|
 | `deploy` | `POST /api/v1/deploy` |
 | `deploy` (status polling) | `GET /api/v1/deploy/status` |
-| `preview` | `POST /api/v1/preview` |
+| `pr` | `POST /api/v1/preview` |
 | `promote` (cross-env) | `POST /api/v1/deploy` (with action=promote) |
 | `promote` (canary) | `POST /api/v1/deploy` (with action=promote-canary) |
 | `sync-secrets` | `POST /api/v1/secrets` |

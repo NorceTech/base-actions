@@ -1,9 +1,9 @@
 name: 'Base PR Environment'
-description: 'Manage PR ephemeral environments (pr-*) on Norce Base Platform. Not related to staged deployment (<env>-preview).'
+description: 'Create, update, and delete PR environments on Norce Base Platform.'
 author: 'NorceTech'
 
 branding:
-  icon: 'eye'
+  icon: 'git-pull-request'
   color: 'purple'
 
 inputs:
@@ -11,7 +11,7 @@ inputs:
     description: 'Action to perform (create, update, delete)'
     required: true
   image_tag:
-    description: 'Image tag for the preview (not needed for delete)'
+    description: 'Image tag for the PR environment (not needed for delete)'
     required: false
   app:
     description: 'App name (defaults to repository name)'
@@ -31,25 +31,19 @@ inputs:
 outputs:
   success:
     description: 'Whether the action was successful'
-    value: ${{ steps.preview.outputs.success }}
+    value: ${{ steps.pr.outputs.success }}
   preview_url:
-    description: 'URL of the preview environment'
-    value: ${{ steps.preview.outputs.preview_url }}
-  namespace:
-    description: 'Kubernetes namespace'
-    value: ${{ steps.preview.outputs.namespace }}
-  git_commit_sha:
-    description: 'Git commit SHA in GitOps repo'
-    value: ${{ steps.preview.outputs.git_commit_sha }}
+    description: 'URL of the PR environment'
+    value: ${{ steps.pr.outputs.preview_url }}
   message:
     description: 'Result message'
-    value: ${{ steps.preview.outputs.message }}
+    value: ${{ steps.pr.outputs.message }}
 
 runs:
   using: 'composite'
   steps:
     - name: Manage PR Environment
-      id: preview
+      id: pr
       shell: bash
       env:
         API_URL: ${{ inputs.api_url }}
@@ -66,4 +60,4 @@ runs:
       run: bash ${{ github.action_path }}/pr.sh
 
     # PR comments are handled by the norce-base GitHub App (via backend callbacks)
-    # The bot posts: pending → ready (when healthy) → deleted (when PR closes)
+    # The bot posts: ⏳ Deploying → 🚀 Ready (when healthy + reachable) → 🗑️ Deleted (when PR closes)
