@@ -7,6 +7,7 @@ START_TIME=$(date +%s)
 POLL_INTERVAL=10
 SYNC_GRACE=30
 LAST_STATUS=""
+UNKNOWN_WARNED=false
 
 while true; do
   CURRENT_TIME=$(date +%s)
@@ -25,6 +26,11 @@ while true; do
     echo "║ Current tag:  ${LAST_TAG:-unknown}"
     echo "║"
     echo "║ Common causes:"
+    if [ "${LAST_HEALTH:-Unknown}" == "Unknown" ] && [ "${LAST_SYNC:-Unknown}" == "Unknown" ]; then
+    echo "║   • New environment — platform is still provisioning it"
+    echo "║   • The deploy is submitted and will go live automatically"
+    echo "║   • Check the Base Portal for status"
+    fi
     echo "║   • Image pull error (wrong tag or ACR permissions)"
     echo "║   • Application crash loop (check pod logs)"
     echo "║   • Health/readiness probe failing"
@@ -124,6 +130,12 @@ while true; do
     echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
     echo "healthy=true" >> $GITHUB_OUTPUT
     exit 0
+  fi
+
+  # New environment: platform is still provisioning the deployment target
+  if [ "$HEALTH" == "Unknown" ] && [ "$SYNC" == "Unknown" ] && [ "$UNKNOWN_WARNED" == "false" ] && [ $ELAPSED -ge 30 ]; then
+    UNKNOWN_WARNED=true
+    echo "  ℹ️  Environment not found yet — platform is provisioning the new environment..."
   fi
 
   if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
