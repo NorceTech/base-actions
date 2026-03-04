@@ -67,12 +67,17 @@ while true; do
     LAST_STATUS="$STATUS_LINE"
   fi
 
-  # Suspended = blue-green preview deployed, waiting for manual promotion.
-  # This is the expected end state when preview/blue-green is enabled.
-  # ArgoCD reports OutOfSync because the stable ReplicaSet still has the old image
-  # (only the preview has the new one), so we don't require Synced or tag match.
-  # Suspended itself confirms ArgoCD picked up the change and the preview is ready.
+  # Suspended = staged/canary preview deployed, waiting for manual promotion.
+  # When Synced, this is the expected end state for staged deployments.
+  # When OutOfSync, ArgoCD may still be syncing a strategy change (e.g. auto_promote
+  # was just toggled), so we keep polling during the grace period to let it resolve.
   if [ "$HEALTH" == "Suspended" ]; then
+    if [ "$SYNC" != "Synced" ] && [ $ELAPSED -lt $SYNC_GRACE ]; then
+      # ArgoCD hasn't synced yet — the strategy may change (Suspended → Healthy)
+      sleep $POLL_INTERVAL
+      continue
+    fi
+
     # Derive preview URL from namespace: {partner}-{app}-{env}
     # Preview URL: preview-{app}-{env}.{partner}.base.norce.tech
     PREVIEW_URL=""
