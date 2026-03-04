@@ -139,6 +139,50 @@ if [ "$HAS_ENVIRONMENTS" = "true" ]; then
   ENV_NAMES=$(echo "$FILE_JSON" | jq -r '.environments | keys[]')
 
   for ENV_NAME in $ENV_NAMES; do
+    # Validate environment name against allowed list (must match backend isAllowedSecretEnvironment)
+    # Allowed: global, dev, test, stage, prod, preview, <env>-preview, pr-*, preview-*, feature-*, branch-*
+    ALLOWED_SECRET_ENVS="dev test stage prod"
+    is_valid_secret_env() {
+      local env="$1"
+      if [ "$env" = "global" ]; then return 0; fi
+      if [ "$env" = "preview" ]; then return 0; fi
+      # Named environments
+      for allowed in $ALLOWED_SECRET_ENVS; do
+        if [ "$env" = "$allowed" ]; then return 0; fi
+      done
+      # Per-environment preview overrides: <env>-preview
+      for allowed in $ALLOWED_SECRET_ENVS; do
+        if [ "$env" = "${allowed}-preview" ]; then return 0; fi
+      done
+      # PR/preview patterns
+      if echo "$env" | grep -qE '^(pr-|preview-|feature-|branch-)[0-9]'; then return 0; fi
+      return 1
+    }
+
+    if ! is_valid_secret_env "$ENV_NAME"; then
+      echo ""
+      echo "::error::Invalid environment name in secrets file: '$ENV_NAME'"
+      echo ""
+      echo "╔══════════════════════════════════════════════════════"
+      echo "║ ❌ INVALID SECRET ENVIRONMENT: '$ENV_NAME'"
+      echo "╠══════════════════════════════════════════════════════"
+      echo "║"
+      echo "║ Allowed environment names:"
+      echo "║   dev, test, stage, prod, preview, pr-*"
+      echo "║   <env>-preview (e.g. prod-preview, stage-preview)"
+      echo "║"
+      echo "║ Common mistakes:"
+      echo "║   staging    → use 'stage' instead"
+      echo "║   production → use 'prod' instead"
+      echo "║   development → use 'dev' instead"
+      echo "║   pre-prod   → use 'prod-preview' instead"
+      echo "║"
+      echo "║ Check your .base/secrets.yaml"
+      echo "╚══════════════════════════════════════════════════════"
+      TOTAL_FAILED=$((TOTAL_FAILED + 1))
+      continue
+    fi
+
     # environments.global → sync as "all" (global secrets)
     local_env="$ENV_NAME"
     if [ "$ENV_NAME" = "global" ]; then

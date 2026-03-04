@@ -6,8 +6,8 @@ ALLOWED_ENVS="dev test stage prod"
 validate_env() {
   local env="$1"
   local label="$2"
-  # Allow pr-* and feature-* prefixed names (preview environments)
-  if [[ "$env" =~ ^(pr-|preview-|feature-|branch-) ]]; then
+  # Allow pr-123, preview-42 etc. (ephemeral preview environments, digit after prefix)
+  if [[ "$env" =~ ^(pr-|preview-|feature-|branch-)[0-9] ]]; then
     return 0
   fi
   for allowed in $ALLOWED_ENVS; do
@@ -105,18 +105,18 @@ if [ "$GLOBAL_ENV" != "[]" ]; then
   CONFIG=$(echo "$CONFIG" | jq --argjson merged "$MERGED_ENV" '.env = $merged')
 fi
 
-# Read per-environment preview config (for staged deployments)
-# e.g., environments.prod.preview.env overrides during staged deploy on prod
+# Read staged deployment config overrides (e.g., environments.prod-preview)
+# Same top-level structure as secrets.yaml: environments.<env>-preview
 PREVIEW_CONFIG="{}"
 if [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
-    PREVIEW_CONFIG=$(yq -o=json -I=0 ".environments.$ENVIRONMENT.preview // {}" "$CONFIG_FILE" 2>/dev/null || echo "{}")
+    PREVIEW_CONFIG=$(yq -o=json -I=0 ".environments.\"${ENVIRONMENT}-preview\" // {}" "$CONFIG_FILE" 2>/dev/null || echo "{}")
   else
     PREVIEW_CONFIG=$(python3 -c "
 import yaml, json, os
 with open(os.environ['CONFIG_FILE']) as f:
     data = yaml.safe_load(f)
-    preview = data.get('environments', {}).get(os.environ['ENVIRONMENT'], {}).get('preview', {})
+    preview = data.get('environments', {}).get(os.environ['ENVIRONMENT'] + '-preview', {})
     print(json.dumps(preview, separators=(',', ':')))
 " 2>/dev/null || echo "{}")
   fi
@@ -153,6 +153,11 @@ fi
 # Send per-environment preview config for staged deployments
 if [ "$PREVIEW_CONFIG" != "{}" ]; then
   BODY=$(echo "$BODY" | jq --argjson preview_config "$PREVIEW_CONFIG" '. + {preview_config: $preview_config}')
+fi
+
+# Send auto_promote setting if specified (overrides portal setting for this environment)
+if [ -n "${AUTO_PROMOTE:-}" ]; then
+  BODY=$(echo "$BODY" | jq --argjson auto_promote "$AUTO_PROMOTE" '. + {auto_promote: $auto_promote}')
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \

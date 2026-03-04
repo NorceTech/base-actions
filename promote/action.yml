@@ -1,5 +1,5 @@
 name: 'Base Promote'
-description: 'Promote deployment from one environment to another on Norce Base Platform'
+description: 'Promote deployment between environments or promote a staged canary to live'
 author: 'NorceTech'
 
 branding:
@@ -10,12 +10,23 @@ inputs:
   app:
     description: 'App name (defaults to repository name)'
     required: false
+  environment:
+    description: >
+      Target environment for canary promotion. Use with canary: true to promote
+      a staged preview to live within this environment.
+    required: false
+  canary:
+    description: >
+      Set to "true" to promote a staged canary to live (requires environment input).
+      When false or omitted, performs cross-environment promotion (requires from_environment and to_environment).
+    required: false
+    default: 'false'
   from_environment:
-    description: 'Source environment to promote from'
-    required: true
+    description: 'Source environment for cross-environment promotion (e.g., stage)'
+    required: false
   to_environment:
-    description: 'Target environment to promote to'
-    required: true
+    description: 'Target environment for cross-environment promotion (e.g., prod)'
+    required: false
   api_url:
     description: 'Base Platform API URL'
     required: false
@@ -54,6 +65,8 @@ runs:
         API_URL: ${{ inputs.api_url }}
         API_KEY: ${{ inputs.api_key }}
         APP: ${{ inputs.app || github.event.repository.name }}
+        CANARY: ${{ inputs.canary }}
+        ENVIRONMENT: ${{ inputs.environment }}
         FROM_ENV: ${{ inputs.from_environment }}
         TO_ENV: ${{ inputs.to_environment }}
       run: bash ${{ github.action_path }}/promote.sh

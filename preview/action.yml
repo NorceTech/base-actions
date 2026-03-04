@@ -1,5 +1,5 @@
-name: 'Base Preview'
-description: 'Manage PR preview environments on Norce Base Platform'
+name: 'Base PR Environment'
+description: 'Manage PR ephemeral environments (pr-*) on Norce Base Platform. Not related to staged deployment (<env>-preview).'
 author: 'NorceTech'
 
 branding:
@@ -48,7 +48,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Manage Preview Environment
+    - name: Manage PR Environment
       id: preview
       shell: bash
       env:
@@ -63,7 +63,7 @@ runs:
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_URL: ${{ github.event.pull_request.html_url }}
         CONFIG_FILE: ${{ inputs.config_file }}
-      run: bash ${{ github.action_path }}/preview.sh
+      run: bash ${{ github.action_path }}/pr.sh
 
     # PR comments are handled by the norce-base GitHub App (via backend callbacks)
     # The bot posts: pending → ready (when healthy) → deleted (when PR closes)

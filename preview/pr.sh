@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Read preview config from YAML (skip for delete)
-# Config resolution (three-layer): global → inherited env → preview overrides
+# Manage PR ephemeral environments (pr-*).
+# Config resolution (three-layer): global → inherited env → pr scope overrides
 if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
   if command -v yq &> /dev/null; then
     GLOBAL_ENV=$(yq -o=json -I=0 '.environments.global.env // []' "$CONFIG_FILE")
-    PREVIEW_CONFIG=$(yq -o=json -I=0 '.environments.preview // {}' "$CONFIG_FILE")
+    PR_CONFIG=$(yq -o=json -I=0 '.environments.pr // {}' "$CONFIG_FILE")
 
-    # Check for config inheritance (e.g., preview.inherits: stage)
-    INHERITS=$(yq -r '.environments.preview.inherits // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    # Check for config inheritance (e.g., pr.inherits: stage)
+    INHERITS=$(yq -r '.environments.pr.inherits // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
     if [ -n "$INHERITS" ]; then
       PARENT_CONFIG=$(yq -o=json -I=0 ".environments.$INHERITS // {}" "$CONFIG_FILE")
-      CHILD_CONFIG=$(echo "$PREVIEW_CONFIG" | jq 'del(.inherits)')
-      # Deep merge: parent as base, preview overrides scalar/object fields
-      # For env arrays: merge by name (preview wins on name conflict)
-      PREVIEW_CONFIG=$(jq -n --argjson parent "$PARENT_CONFIG" --argjson child "$CHILD_CONFIG" '
+      CHILD_CONFIG=$(echo "$PR_CONFIG" | jq 'del(.inherits)')
+      # Deep merge: parent as base, pr overrides scalar/object fields
+      # For env arrays: merge by name (pr wins on name conflict)
+      PR_CONFIG=$(jq -n --argjson parent "$PARENT_CONFIG" --argjson child "$CHILD_CONFIG" '
         ($parent * ($child | del(.env))) as $merged |
         if ($child.env // null) != null then
           $merged | .env = (($parent.env // []) + $child.env | group_by(.name) | map(last))
@@ -27,8 +27,8 @@ if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
       ')
     fi
 
-    # Merge global env vars: global first, then inherited+preview (last value wins)
-    CONFIG=$(echo "$PREVIEW_CONFIG" | jq --argjson global "$GLOBAL_ENV" \
+    # Merge global env vars: global first, then inherited+pr (last value wins)
+    CONFIG=$(echo "$PR_CONFIG" | jq --argjson global "$GLOBAL_ENV" \
       '.env = (($global + (.env // [])) | group_by(.name) | map(last))')
   else
     CONFIG=$(python3 -c "
@@ -37,25 +37,25 @@ with open(os.environ['CONFIG_FILE']) as f:
     data = yaml.safe_load(f)
     envs = data.get('environments', {})
     global_env = envs.get('global', {}).get('env', [])
-    preview = dict(envs.get('preview', {}))
+    pr = dict(envs.get('pr', {}))
     # Handle config inheritance
-    inherits = preview.pop('inherits', None)
+    inherits = pr.pop('inherits', None)
     if inherits:
         parent = dict(envs.get(inherits, {}))
-        child_env = preview.pop('env', None)
-        merged = {**parent, **{k: v for k, v in preview.items() if k != 'env'}}
+        child_env = pr.pop('env', None)
+        merged = {**parent, **{k: v for k, v in pr.items() if k != 'env'}}
         if child_env is not None:
             parent_env = {e['name']: e for e in parent.get('env', [])}
             for e in child_env:
                 parent_env[e['name']] = e
             merged['env'] = list(parent_env.values())
-        preview = merged
-    # Merge global env vars (global first, preview overrides)
+        pr = merged
+    # Merge global env vars (global first, pr overrides)
     merged_env = {e['name']: e for e in global_env}
-    for e in preview.get('env', []):
+    for e in pr.get('env', []):
         merged_env[e['name']] = e
-    preview['env'] = list(merged_env.values())
-    print(json.dumps(preview, separators=(',', ':')))
+    pr['env'] = list(merged_env.values())
+    print(json.dumps(pr, separators=(',', ':')))
 " 2>/dev/null || echo "{}")
   fi
 else

@@ -7,7 +7,7 @@ Official GitHub Actions for deploying to the Norce Base Platform.
 | Action | Description |
 |--------|-------------|
 | `NorceTech/base-actions/deploy` | Deploy to any environment |
-| `NorceTech/base-actions/preview` | Manage PR preview environments |
+| `NorceTech/base-actions/preview` | Manage PR ephemeral environments (pr-*) |
 | `NorceTech/base-actions/promote` | Promote between environments |
 | `NorceTech/base-actions/sync-secrets` | Sync GitHub Secrets to your secure vault |
 
@@ -109,7 +109,7 @@ jobs:
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
-### Promote Stage to Prod
+### Promote Stage to Prod (Cross-Environment)
 
 ```yaml
 name: Promote to Production
@@ -126,6 +126,26 @@ jobs:
         with:
           from_environment: stage
           to_environment: prod
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+```
+
+### Promote Canary to Live
+
+```yaml
+name: Promote Canary
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: NorceTech/base-actions/promote@v1
+        with:
+          environment: prod
+          canary: true
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
 ```
 
@@ -269,7 +289,57 @@ Pattern-based names that are auto-created per PR and auto-deleted when the PR cl
 
 ### Staged Deployment
 
-Any named environment can use staged deployment (`autoPromote: false` in portal settings). This deploys a canary version accessible on a preview URL. After testing, promote to make it live.
+Any named environment can use staged deployment. When `auto_promote: false`, deploys create a canary version on a preview URL. After testing, promote to make it live.
+
+Set the strategy from CI/CD using the `auto_promote` input on the deploy action, or toggle it in the portal Settings tab.
+
+```yaml
+name: Staged Deploy to Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push
+        id: build
+        run: echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  deploy-canary:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .base
+      - uses: NorceTech/base-actions/deploy@v1
+        id: deploy
+        with:
+          environment: prod
+          image_tag: ${{ needs.build.outputs.image_tag }}
+          auto_promote: false    # Staged: canary pauses for review
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+
+      # Preview URL is available when deployment is Suspended
+      - name: Show preview URL
+        run: echo "Preview → ${{ steps.deploy.outputs.preview_url }}"
+
+  promote:
+    needs: deploy-canary
+    runs-on: ubuntu-latest
+    environment: production    # Requires manual approval
+    steps:
+      - uses: NorceTech/base-actions/promote@v1
+        with:
+          environment: prod
+          canary: true
+          api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
+```
 
 ## Configuration
 
@@ -298,10 +368,11 @@ environments:
     env:
       - name: LOG_LEVEL
         value: debug
-    preview:                         # Overrides applied during staged deployments on stage
-      env:
-        - name: DEBUG
-          value: 'true'
+
+  stage-preview:                     # Overrides during staged deployments on stage
+    env:
+      - name: DEBUG
+        value: 'true'
 
   prod:
     replicas: 3
@@ -319,13 +390,14 @@ environments:
     env:
       - name: LOG_LEVEL
         value: warn
-    preview:                         # Overrides applied during staged deployments on prod
-      env:
-        - name: CANARY_METRICS
-          value: 'enabled'
+
+  prod-preview:                      # Overrides during staged deployments on prod
+    env:
+      - name: CANARY_METRICS
+        value: 'enabled'
 
   # Config scope for PR environments (not a named environment)
-  preview:
+  pr:
     inherits: stage                  # Inherit stage config as base
     replicas: 1
     resources:
@@ -339,18 +411,18 @@ environments:
 
 ### Config Resolution
 
-| Scenario | Resolution Order |
-|----------|-----------------|
-| Named env deploy | `global` + `<env>` |
-| Staged deployment | `global` + `<env>` + `<env>.preview` overrides |
-| PR environment | `global` + `<inherited-env>` + `preview` overrides |
+| Scenario | Config vars | Secrets |
+|----------|-------------|---------|
+| Named env deploy | `global` + `<env>` | `all` + `<env>` |
+| Staged deployment | `global` + `<env>` + `<env>-preview` | `all` + `<env>` + `<env>-preview` |
+| PR environment | `global` + `<inherited-env>` + `pr` | `all` + `preview` |
 
 ### Key Notes
 
 - **Global env vars** (`environments.global.env`) are merged into every deploy and shown separately in the portal Config tab
 - **Per-environment env vars** override globals if they share the same name
-- **`environments.preview`** is a config scope for PR environments, NOT a named environment. Use `inherits` to base PR config on a named environment.
-- **`<env>.preview`** is a nested key for staged deployment overrides on that specific environment (e.g., `prod.preview.env` applies during staged deployments on prod)
+- **`environments.pr`** is the config scope for PR environments, NOT a named environment. Use `inherits` to base PR config on a named environment.
+- **`environments.<env>-preview`** is a top-level key for staged deployment overrides (e.g., `environments.prod-preview`). Same structure as secrets.
 - Resources, replicas, and autoscaling are always per-environment
 - **`healthCheckPath`** — HTTP readiness probe path. Default is TCP port check (safe for auth-protected apps). Only set if your app has a public health endpoint returning HTTP 200.
 - **`startupGracePeriod`** — Seconds to wait for app startup (default: 300, range: 10–900). Increase for slow-starting apps like large Next.js SSR builds.
@@ -363,9 +435,30 @@ Secrets are managed in Azure KeyVault with tag-based scoping:
 
 | Tag | Scope |
 |-----|-------|
-| `environment=all` | All environments |
-| `environment=<env>` | Specific environment (e.g., `environment=prod`) |
+| `environment=all` | All environments (including PR previews and staged deployments) |
+| `environment=<env>` | Specific named environment (e.g., `environment=prod`) |
+| `environment=<env>-preview` | Staged deployment overrides (e.g., `environment=prod-preview`) |
 | `environment=preview` | All PR environments |
+
+Secrets follow the same override pattern as config vars. Use the `<env>-preview` convention in `.base/secrets.yaml` to override secrets during staged deployments:
+
+```yaml
+# .base/secrets.yaml
+environments:
+  global:
+    - github: SHARED_API_KEY
+      keyvault: shared-api-key
+
+  prod:
+    - github: STRIPE_SECRET_KEY
+      keyvault: stripe-secret-key
+
+  prod-preview:                          # Overrides during staged deployments on prod
+    - github: STRIPE_TEST_KEY
+      keyvault: stripe-secret-key        # Same keyvault name → overrides prod value
+```
+
+During staged deployments, canary pods receive: `environment=all` + `environment=<env>` + `environment=<env>-preview`. After promotion, preview overrides are removed and the live version uses only `environment=all` + `environment=<env>`.
 
 Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
 
@@ -393,6 +486,7 @@ Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
 | `api_key` | Yes | - | API key (identifies partner) |
 | `wait_for_healthy` | No | `true` | Wait for deployment to become healthy |
 | `wait_timeout` | No | `300` | Timeout in seconds when waiting for healthy status |
+| `auto_promote` | No | - | `false` = staged canary, `true` = instant rollout. Omit to use portal setting. |
 
 | Output | Description |
 |--------|-------------|
@@ -442,7 +536,7 @@ By default, the deploy action waits for your deployment to become healthy before
     wait_timeout: '600'  # 10 minutes for larger deployments
 ```
 
-### `preview`
+### `preview` (PR environments)
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -463,10 +557,16 @@ By default, the deploy action waits for your deployment to become healthy before
 
 ### `promote`
 
+Supports two modes:
+- **Canary promotion** (`canary: true` + `environment`): promotes a staged canary to live
+- **Cross-environment** (`from_environment` + `to_environment`): copies image from one env to another
+
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `from_environment` | Yes | - | Source environment |
-| `to_environment` | Yes | - | Target environment |
+| `environment` | No | - | Target environment for canary promotion (use with `canary: true`) |
+| `canary` | No | `false` | Set to `true` to promote a staged canary to live |
+| `from_environment` | No | - | Source environment for cross-env promotion |
+| `to_environment` | No | - | Target environment for cross-env promotion |
 | `app` | No | repo name | App name |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
@@ -505,7 +605,8 @@ The actions call the following endpoints:
 | `deploy` | `POST /api/v1/deploy` |
 | `deploy` (status polling) | `GET /api/v1/deploy/status` |
 | `preview` | `POST /api/v1/preview` |
-| `promote` | `POST /api/v1/deploy` (with action=promote) |
+| `promote` (cross-env) | `POST /api/v1/deploy` (with action=promote) |
+| `promote` (canary) | `POST /api/v1/deploy` (with action=promote-canary) |
 | `sync-secrets` | `POST /api/v1/secrets` |
 
 ## Multi-Brand / Multi-Site Deployments

@@ -8,7 +8,7 @@ branding:
 
 inputs:
   environment:
-    description: 'Target environment (e.g. stage, staging, prod, dev). Must match exactly the environment name in Base Portal.'
+    description: 'Target environment (dev, test, stage, prod, or pr-*). Must match exactly.'
     required: true
   image_tag:
     description: 'Image tag to deploy'
@@ -38,6 +38,11 @@ inputs:
     description: 'Timeout in seconds when waiting for healthy status'
     required: false
     default: '300'
+  auto_promote:
+    description: >
+      Deployment strategy. Set to "false" for staged deployment (canary + manual promotion).
+      Set to "true" for auto-promote (instant rollout). Omit to use the current portal setting.
+    required: false
 
 outputs:
   success:
@@ -81,6 +86,7 @@ runs:
         COMMIT_SHA: ${{ github.sha }}
         CONFIG_FILE: ${{ inputs.config_file }}
         REPO_NAME: ${{ github.event.repository.name }}
+        AUTO_PROMOTE: ${{ inputs.auto_promote }}
       run: bash ${{ github.action_path }}/deploy.sh
 
     - name: Wait for healthy deployment
