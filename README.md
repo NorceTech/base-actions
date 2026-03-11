@@ -384,6 +384,7 @@ environments:
       enabled: true
       minReplicas: 2
       maxReplicas: 10
+      behaviorPreset: gradual           # 'default' | 'gradual' | 'cautious' | 'custom'
       triggers:
         - type: cpu
           utilizationPercentage: 80
@@ -428,6 +429,78 @@ environments:
 - **`startupGracePeriod`** — Seconds to wait for app startup (default: 300, range: 10–900). Increase for slow-starting apps like large Next.js SSR builds.
 - **`containerPort`** — Port your app listens on (default: 3000). Updates Deployment containerPort and Service targetPort.
 - **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
+- **`behaviorPreset`** — Controls how fast autoscaling adds/removes pods. See [Scaling Behavior](#scaling-behavior) below.
+
+### Scaling Behavior
+
+Controls **how fast** KEDA scales up/down (not **when** — that's what triggers do). Protects slow-starting apps from being killed or starved during scale events.
+
+#### Presets
+
+| Preset | Scale Up | Scale Down | Min Ready | Shutdown | Best For |
+|--------|----------|------------|-----------|----------|----------|
+| `default` | No limits | No limits | 0s | 30s | Fast apps (Next.js, static) |
+| `gradual` | +2 pods/60s | -1 pod/120s, 5 min stabilization | 30s | 30s | Most apps |
+| `cautious` | +1 pod/120s, 60s stabilization | -1 pod/300s, 10 min stabilization | 60s | 60s | Java/.NET, slow starters |
+| `custom` | User-defined | User-defined | User-defined | User-defined | Full control |
+
+Set it in `.base/config.yaml`:
+
+```yaml
+environments:
+  prod:
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      behaviorPreset: gradual        # Pick a preset
+      triggers:
+        - type: cpu
+          utilizationPercentage: 70
+```
+
+For full control, use `custom` with explicit behavior:
+
+```yaml
+environments:
+  prod:
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      behaviorPreset: custom
+      behavior:
+        scaleUp:
+          maxPods: 3
+          periodSeconds: 45
+        scaleDown:
+          maxPods: 1
+          periodSeconds: 120
+          stabilizationWindowSeconds: 300
+        minReadySeconds: 30
+        terminationGracePeriodSeconds: 60
+      pollingInterval: 15            # How often KEDA checks metrics (seconds)
+      cooldownPeriod: 300            # Wait after last scale event (seconds)
+      triggers:
+        - type: cpu
+          utilizationPercentage: 70
+```
+
+| Field | Description | Range |
+|-------|-------------|-------|
+| `behaviorPreset` | Preset name | `default`, `gradual`, `cautious`, `custom` |
+| `behavior.scaleUp.maxPods` | Max pods to add at once | 1-10 |
+| `behavior.scaleUp.periodSeconds` | Wait between scale-ups | 15-600 |
+| `behavior.scaleUp.stabilizationWindowSeconds` | Look-back window for scale-up | 0-600 |
+| `behavior.scaleDown.maxPods` | Max pods to remove at once | 1-10 |
+| `behavior.scaleDown.periodSeconds` | Wait between scale-downs | 60-900 |
+| `behavior.scaleDown.stabilizationWindowSeconds` | Look-back window for scale-down | 0-900 |
+| `behavior.minReadySeconds` | Pod must stay healthy before getting traffic | 0-300 |
+| `behavior.terminationGracePeriodSeconds` | Graceful shutdown time | 30-300 |
+| `pollingInterval` | How often KEDA checks metrics | 10-300 |
+| `cooldownPeriod` | Wait after last scale event | 60-900 |
+
+The portal Scaling tab also shows a recommendation based on your app's observed startup time.
 
 ### Secrets
 
