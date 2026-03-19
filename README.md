@@ -442,10 +442,11 @@ environments:
 - **`containerPort`** — Port your app listens on (default: 3000). Updates Deployment containerPort and Service targetPort.
 - **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
 - **`behaviorPreset`** — Controls how fast autoscaling adds/removes pods. See [Scaling Behavior](#scaling-behavior) below.
+- **`scaleToZero`** — When `true`, pods scale to 0 when idle (no traffic for 5 min). First request has ~10-30s cold start. See [Scale to Zero](#scale-to-zero).
 
 ### Scaling Behavior
 
-Controls **how fast** KEDA scales up/down (not **when** — that's what triggers do). Protects slow-starting apps from being killed or starved during scale events.
+Controls **how fast** the platform scales up/down (not **when** — that's what triggers do). Protects slow-starting apps from being killed or starved during scale events.
 
 #### Presets
 
@@ -492,7 +493,7 @@ environments:
           stabilizationWindowSeconds: 300
         minReadySeconds: 30
         terminationGracePeriodSeconds: 60
-      pollingInterval: 15            # How often KEDA checks metrics (seconds)
+      pollingInterval: 15            # How often the platform checks metrics (seconds)
       cooldownPeriod: 300            # Wait after last scale event (seconds)
       triggers:
         - type: cpu
@@ -514,10 +515,43 @@ environments:
 | `behavior.scaleDown.stabilizationWindowSeconds` | Look-back window for scale-down | 0-900 |
 | `behavior.minReadySeconds` | Pod must stay healthy before getting traffic | 0-300 |
 | `behavior.terminationGracePeriodSeconds` | Graceful shutdown time | 30-300 |
-| `pollingInterval` | How often KEDA checks metrics | 10-300 |
+| `pollingInterval` | How often the platform checks metrics | 10-300 |
 | `cooldownPeriod` | Wait after last scale event | 60-900 |
 
 The portal Scaling tab also shows a recommendation based on your app's observed startup time.
+
+### Scale to Zero
+
+Environments with low or intermittent traffic can scale to **0 pods** when idle. All pods are removed after the cooldown period (default 5 min) with no traffic, and a pod is created on the first incoming request. Cold start is ~10-30 seconds depending on image size and startup time.
+
+```yaml
+environments:
+  stage:
+    autoscaling:
+      enabled: true
+      scaleToZero: true       # Scale down to 0 pods when idle
+      maxReplicas: 5
+      triggers:
+        - type: http
+          requestsPerSecond: 10
+```
+
+| Setting | With `scaleToZero: true` | Without (default) |
+|---------|-------------------------|-------------------|
+| Idle (no traffic for 5 min) | 0 pods | minReplicas pods |
+| First request after idle | ~10-30s cold start | Instant |
+| Active traffic | Scales normally (1 → maxReplicas) | Scales normally |
+
+**When to use:**
+- Stage/test environments that are only used during work hours
+- PR environments (automatic — always scale to zero)
+- Low-traffic internal tools
+
+**When NOT to use:**
+- Production customer-facing apps (cold start = bad UX)
+- Apps with health check dependencies (external services may timeout during cold start)
+
+Remove `scaleToZero: true` to restore normal behavior — your `minReplicas` value applies again.
 
 ### Scaling Triggers
 
@@ -591,7 +625,7 @@ environments:
 |-------|-------|---------|
 | `requestsPerSecond` | 1–10,000 | 100 |
 
-The threshold is **per pod** (KEDA AverageValue semantics). KEDA calculates desired replicas as `ceil(total_rps / threshold)`. Example: with `minReplicas: 3` and `requestsPerSecond: 50`, scale-up to 4 pods triggers when total traffic exceeds 150 req/s (50 × 3).
+The threshold is **per pod**. Desired replicas are calculated as `ceil(total_rps / threshold)`. Example: with `minReplicas: 3` and `requestsPerSecond: 50`, scale-up to 4 pods triggers when total traffic exceeds 150 req/s (50 × 3).
 
 Best for: Web apps and APIs where traffic directly correlates with load. Always combine with a CPU trigger as a safety net.
 
