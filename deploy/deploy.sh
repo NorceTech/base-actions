@@ -160,6 +160,25 @@ if [ -n "${AUTO_PROMOTE:-}" ]; then
   BODY=$(echo "$BODY" | jq --argjson auto_promote "$AUTO_PROMOTE" '. + {auto_promote: $auto_promote}')
 fi
 
+# Read custom NGINX config (./base/nginx.yaml) for proxy buffers, headers, etc.
+# Generates a SnippetsFilter resource in the partner apps repo
+if [ -f "${NGINX_CONFIG_FILE:-}" ]; then
+  NGINX_CONFIG="{}"
+  if command -v yq &> /dev/null; then
+    NGINX_CONFIG=$(yq -o=json -I=0 '.' "$NGINX_CONFIG_FILE" 2>/dev/null || echo "{}")
+  else
+    NGINX_CONFIG=$(python3 -c "
+import yaml, json, os
+with open(os.environ['NGINX_CONFIG_FILE']) as f:
+    data = yaml.safe_load(f)
+    print(json.dumps(data, separators=(',', ':')))
+" 2>/dev/null || echo "{}")
+  fi
+  if [ "$NGINX_CONFIG" != "{}" ]; then
+    BODY=$(echo "$BODY" | jq --argjson nginx_config "$NGINX_CONFIG" '. + {nginx_config: $nginx_config}')
+  fi
+fi
+
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \

@@ -23,6 +23,10 @@ inputs:
     description: 'Path to config file'
     required: false
     default: '.base/config.yaml'
+  nginx_config_file:
+    description: 'Path to custom NGINX config file (proxy buffers, headers, etc.)'
+    required: false
+    default: '.base/nginx.yaml'
   api_url:
     description: 'Base Platform API URL'
     required: false
@@ -85,6 +89,7 @@ runs:
         IMAGE: ${{ inputs.image }}
         COMMIT_SHA: ${{ github.sha }}
         CONFIG_FILE: ${{ inputs.config_file }}
+        NGINX_CONFIG_FILE: ${{ inputs.nginx_config_file }}
         REPO_NAME: ${{ github.event.repository.name }}
         AUTO_PROMOTE: ${{ inputs.auto_promote }}
       run: bash ${{ github.action_path }}/deploy.sh
