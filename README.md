@@ -262,6 +262,7 @@ This deploys the image `my-image:<tag>` instead of `my-app:<tag>`.
           app: my-app
           image: my-image
           config_file: .base/config.yaml
+          nginx_config_file: .base/nginx.yaml
           api_url: https://base-api.norce.tech
           api_key: ${{ secrets.BASE_PLATFORM_API_KEY }}
           wait_for_healthy: 'true'
@@ -752,6 +753,7 @@ Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
 | `app` | No | repo name | App name |
 | `image` | No | app name | Container image name (when image name differs from app) |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
+| `nginx_config_file` | No | `.base/nginx.yaml` | Path to custom NGINX config (proxy buffers, headers, etc.) |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 | `wait_for_healthy` | No | `true` | Wait for deployment to become healthy |
@@ -1104,6 +1106,43 @@ Custom domains are managed through the **Portal** (Settings tab), not through `.
 2. Configures traffic routing
 
 HTTP scaling metrics count all traffic regardless of which hostname it arrives on — the platform identifies traffic by upstream namespace, not by hostname. No extra configuration is needed when adding or removing custom domains.
+
+## Custom NGINX Configuration
+
+Override the default NGINX proxy settings by creating `.base/nginx.yaml`:
+
+```yaml
+# .base/nginx.yaml
+snippets:
+  - context: server
+    value: |
+      proxy_buffer_size 16k;
+      proxy_buffers 4 16k;
+      proxy_busy_buffers_size 32k;
+```
+
+`context` controls where in the NGINX config the snippet is injected:
+
+| Context | Scope | Use case |
+|---------|-------|----------|
+| `server` | Per server block | Proxy buffers, headers (most common) |
+| `http` | Global http block | Map variables, shared settings |
+| `main` | Top-level | Rarely needed |
+
+**Example** — Supabase/Azure auth proxy (large auth headers need bigger buffers):
+
+```yaml
+snippets:
+  - context: server
+    value: |
+      proxy_buffer_size 16k;
+      proxy_buffers 4 16k;
+      proxy_busy_buffers_size 32k;
+```
+
+The file is optional — if it doesn't exist, nothing happens. No workflow changes needed, the next deploy picks it up automatically. You can override the file path with the `nginx_config_file` input on the deploy action.
+
+**Blocked directives** (security): `proxy_pass`, `upstream`, `include`, `env`, `lua_*`, `ssl_certificate`, `load_module` — returns a 400 error if used.
 
 ## Advanced Configuration
 
