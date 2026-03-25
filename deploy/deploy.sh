@@ -179,6 +179,12 @@ with open(os.environ['NGINX_CONFIG_FILE']) as f:
   fi
 fi
 
+# Send expose setting if set to false (internal-only, no HTTPRoute/public DNS)
+EXPOSE=$(echo "$CONFIG" | jq -r '.expose // empty' 2>/dev/null || echo "")
+if [ "$EXPOSE" = "false" ]; then
+  BODY=$(echo "$BODY" | jq '. + {expose: false}')
+fi
+
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
