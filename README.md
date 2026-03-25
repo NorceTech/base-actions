@@ -1114,7 +1114,7 @@ Override the default NGINX proxy settings by creating `.base/nginx.yaml`:
 ```yaml
 # .base/nginx.yaml
 snippets:
-  - context: server
+  - context: http.server
     value: |
       proxy_buffer_size 16k;
       proxy_buffers 4 16k;
@@ -1125,19 +1125,29 @@ snippets:
 
 | Context | Scope | Use case |
 |---------|-------|----------|
-| `server` | Per server block | Proxy buffers, headers (most common) |
-| `http` | Global http block | Map variables, shared settings |
-| `main` | Top-level | Rarely needed |
+| `http.server` | Per server block | Proxy buffers, headers, timeouts (most common) |
+| `http.server.location` | Per location block | Per-path overrides |
+| `http` | Global http block | Map variables, shared settings across all server blocks |
+| `main` | Top-level | Worker settings (rarely needed) |
 
 **Example** — Supabase/Azure auth proxy (large auth headers need bigger buffers):
 
 ```yaml
 snippets:
-  - context: server
+  - context: http.server
     value: |
       proxy_buffer_size 16k;
       proxy_buffers 4 16k;
       proxy_busy_buffers_size 32k;
+```
+
+**Example** — Custom cache headers per location:
+
+```yaml
+snippets:
+  - context: http.server.location
+    value: |
+      add_header Cache-Control "public, max-age=3600";
 ```
 
 The file is optional — if it doesn't exist, nothing happens. No workflow changes needed, the next deploy picks it up automatically. You can override the file path with the `nginx_config_file` input on the deploy action.
