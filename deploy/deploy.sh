@@ -179,10 +179,10 @@ with open(os.environ['NGINX_CONFIG_FILE']) as f:
   fi
 fi
 
-# Send expose setting if set to false (internal-only, no HTTPRoute/public DNS)
-EXPOSE=$(echo "$CONFIG" | jq -r '.expose // empty' 2>/dev/null || echo "")
-if [ "$EXPOSE" = "false" ]; then
-  BODY=$(echo "$BODY" | jq '. + {expose: false}')
+# Send is_private setting if set to true (internal-only, no HTTPRoute/public DNS)
+IS_PRIVATE=$(echo "$CONFIG" | jq -r '.is_private // empty' 2>/dev/null || echo "")
+if [ "$IS_PRIVATE" = "true" ]; then
+  BODY=$(echo "$BODY" | jq '. + {is_private: true}')
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
