@@ -382,6 +382,7 @@ environments:
     replicas: 2
     healthCheckPath: /api/health
     startupGracePeriod: 90
+    is_private: false                  # default: false — set true for internal-only (no public endpoint)
     resources:
       requests:
         cpu: 500m
@@ -441,6 +442,7 @@ environments:
 - **`healthCheckPath`** — HTTP readiness probe path. Default is TCP port check (safe for auth-protected apps). Only set if your app has a public health endpoint returning HTTP 200.
 - **`startupGracePeriod`** — Seconds to wait for app startup (default: 300, range: 10–900). Increase for slow-starting apps like large Next.js SSR builds.
 - **`containerPort`** — Port your app listens on (default: 3000). Updates Deployment containerPort and Service targetPort.
+- **`is_private`** — When `true`, the environment has no public endpoint (no HTTPRoute, no public DNS). The app is only reachable internally via `<service>.<namespace>.svc.cluster.local`. Default: `false`. See [Internal-Only Deployments](#internal-only-deployments).
 - **Env var values are always converted to strings** — you can write `value: 3000`, `value: '3000'`, or `value: "3000"` and the result is the same. The platform handles the conversion automatically.
 - **`behaviorPreset`** — Controls how fast autoscaling adds/removes pods. See [Scaling Behavior](#scaling-behavior) below.
 - **`scaleToZero`** — When `true`, pods scale to 0 when idle (no traffic for 5 min). First request has ~10-30s cold start. See [Scale to Zero](#scale-to-zero).
@@ -1143,6 +1145,31 @@ snippets:
 The file is optional — if it doesn't exist, nothing happens. No workflow changes needed, the next deploy picks it up automatically. You can override the file path with the `nginx_config_file` input on the deploy action.
 
 **Blocked directives** (security): `proxy_pass`, `upstream`, `include`, `env`, `lua_*`, `ssl_certificate`, `load_module` — returns a 400 error if used.
+
+## Internal-Only Deployments
+
+For apps that should only be accessible within the cluster (bots, backend services, MCP servers), set `is_private: true` in the environment config:
+
+```yaml
+# .base/config.yaml
+environments:
+  prod:
+    is_private: true
+    replicas: 2
+    env:
+      - name: PORT
+        value: '3000'
+```
+
+When `is_private: true`:
+- **No HTTPRoute** — no public endpoint or DNS entry is created
+- **No upstream-settings or snippets-filter** — NGINX Gateway Fabric resources are skipped
+- **Pod-based canary** — Argo Rollouts uses replica scaling instead of Gateway API traffic splitting
+- **Cluster-internal access** — the app is reachable via `<partner>-<app>-<env>-stable.<partner>-<app>-<env>.svc.cluster.local`
+
+The `is_private` setting can also be toggled from the portal when adding a new environment ("Internal only" switch). Once set, it flows through promote and rollback operations automatically.
+
+> **Note:** Switching an existing public environment to `is_private: true` removes all HTTPRoute files and public DNS. This is a destructive operation — existing traffic will be dropped.
 
 ## Advanced Configuration
 
