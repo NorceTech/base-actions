@@ -1154,6 +1154,64 @@ snippets:
 
 The file is optional — if it doesn't exist, nothing happens. No workflow changes needed, the next deploy picks it up automatically. You can override the file path with the `nginx_config_file` input on the deploy action.
 
+**Example** — Redirect www to non-www (301):
+
+```yaml
+snippets:
+  - context: http.server
+    value: |
+      if ($host = 'www.example.com') {
+        return 301 https://example.com$request_uri;
+      }
+```
+
+**Example** — Redirect old paths to new paths:
+
+```yaml
+snippets:
+  - context: http.server.location
+    value: |
+      rewrite ^/old-page$ /new-page permanent;
+      rewrite ^/blog/(.*)$ /articles/$1 permanent;
+```
+
+**Example** — Redirect entire old domain to new domain:
+
+```yaml
+snippets:
+  - context: http.server
+    value: |
+      if ($host = 'old-brand.com') {
+        return 301 https://new-brand.com$request_uri;
+      }
+      if ($host = 'www.old-brand.com') {
+        return 301 https://new-brand.com$request_uri;
+      }
+```
+
+**Example** — Force HTTPS (if needed for specific routes):
+
+```yaml
+snippets:
+  - context: http.server.location
+    value: |
+      if ($scheme = 'http') {
+        return 301 https://$host$request_uri;
+      }
+```
+
+**Example** — Maintenance mode (return 503 with retry):
+
+```yaml
+snippets:
+  - context: http.server.location
+    value: |
+      return 503;
+      add_header Retry-After 3600;
+```
+
+> **Note**: Redirects use `return` (simpler, preferred for full URL redirects) or `rewrite` (for pattern-based path rewrites). Both `return` and `rewrite` are allowed directives. Use `permanent` (301) for SEO-safe redirects or `redirect` (302) for temporary ones.
+
 **Blocked directives** (security): `proxy_pass`, `upstream`, `include`, `env`, `lua_*`, `ssl_certificate`, `load_module` — returns a 400 error if used.
 
 ## Internal-Only Deployments
