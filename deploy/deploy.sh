@@ -183,21 +183,39 @@ fi
 # Supports up to 50k redirects per deployment. Backend auto-chunks across
 # multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
 REDIRECTS="[]"
-REDIRECTS_YAML="${REDIRECTS_FILE:-.base/redirects.yaml}"
-REDIRECTS_CSV="${REDIRECTS_YAML%.yaml}.csv"
+REDIRECTS_INPUT="${REDIRECTS_FILE:-.base/redirects.yaml}"
 
-if [ -f "$REDIRECTS_YAML" ]; then
-  if command -v yq &> /dev/null; then
-    REDIRECTS=$(yq -o=json -I=0 '.redirects // []' "$REDIRECTS_YAML" 2>/dev/null || echo "[]")
+# Detect file type: if input is .csv → CSV parser, otherwise try YAML then CSV fallback
+if [ -f "$REDIRECTS_INPUT" ]; then
+  if [[ "$REDIRECTS_INPUT" == *.csv ]]; then
+    # Explicit CSV file
+    REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_INPUT" python3 -c "
+import csv, json, os
+with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
+    reader = csv.DictReader(f)
+    redirects = []
+    for row in reader:
+        fr = (row.get('from') or '').strip()
+        to = (row.get('to') or '').strip()
+        if not fr or not to: continue
+        redirects.append({'from': fr, 'to': to, 'status': int(row.get('status', 301) or 301)})
+    print(json.dumps(redirects, separators=(',',':')))
+" 2>/dev/null || echo "[]")
   else
-    REDIRECTS=$(REDIRECTS_YAML="$REDIRECTS_YAML" python3 -c "
+    # YAML file
+    if command -v yq &> /dev/null; then
+      REDIRECTS=$(yq -o=json -I=0 '.redirects // []' "$REDIRECTS_INPUT" 2>/dev/null || echo "[]")
+    else
+      REDIRECTS=$(REDIRECTS_YAML="$REDIRECTS_INPUT" python3 -c "
 import yaml, json, os
 with open(os.environ['REDIRECTS_YAML']) as f:
     data = yaml.safe_load(f) or {}
     print(json.dumps(data.get('redirects', []), separators=(',',':')))
 " 2>/dev/null || echo "[]")
+    fi
   fi
-elif [ -f "$REDIRECTS_CSV" ]; then
+# Fallback: try .csv sibling if .yaml was specified but doesn't exist
+elif [ -f "${REDIRECTS_INPUT%.yaml}.csv" ]; then
   REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_CSV" python3 -c "
 import csv, json, os, codecs
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
