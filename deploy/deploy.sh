@@ -248,11 +248,38 @@ if [ "$IS_PRIVATE" = "true" ]; then
   jq '. + {is_private: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
-RESPONSE=$(curl -s -w "\n%{http_code}" --noproxy '*' -X POST "${API_URL}/api/v1/deploy" \
+# Large redirect deploys can take >60s (parsing + chunking + git commit with retries).
+# --max-time 180 prevents curl from hanging indefinitely if backend is slow.
+# --connect-timeout 10 fails fast if backend is unreachable.
+RESPONSE=$(curl -s -w "\n%{http_code}" --noproxy '*' --max-time 180 --connect-timeout 10 \
+  -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
   -d "@${BODY_FILE}")
+CURL_EXIT=$?
 rm -f "$BODY_FILE"
+
+if [ "$CURL_EXIT" -ne 0 ]; then
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ DEPLOY REQUEST FAILED (curl exit code $CURL_EXIT)"
+  echo "╠══════════════════════════════════════════════════════"
+  if [ "$CURL_EXIT" -eq 28 ]; then
+    echo "║ Timeout: backend did not respond within 180 seconds."
+    echo "║ The deploy may still be processing — check the portal."
+  elif [ "$CURL_EXIT" -eq 5 ]; then
+    echo "║ Proxy error: could not resolve proxy."
+    echo "║ Check HTTP_PROXY/HTTPS_PROXY environment variables."
+  elif [ "$CURL_EXIT" -eq 7 ]; then
+    echo "║ Connection refused: backend is unreachable."
+  else
+    echo "║ Unexpected curl error."
+  fi
+  echo "╚══════════════════════════════════════════════════════"
+  echo ""
+  echo "deploy_success=false" >> $GITHUB_OUTPUT
+  exit 1
+fi
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
