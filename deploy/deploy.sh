@@ -179,6 +179,48 @@ with open(os.environ['NGINX_CONFIG_FILE']) as f:
   fi
 fi
 
+# Read redirects file (.yaml or .csv) for bulk URL redirects.
+# Supports up to 50k redirects per deployment. Backend auto-chunks across
+# multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
+REDIRECTS="[]"
+REDIRECTS_YAML="${REDIRECTS_FILE:-.base/redirects.yaml}"
+REDIRECTS_CSV="${REDIRECTS_YAML%.yaml}.csv"
+
+if [ -f "$REDIRECTS_YAML" ]; then
+  if command -v yq &> /dev/null; then
+    REDIRECTS=$(yq -o=json -I=0 '.redirects // []' "$REDIRECTS_YAML" 2>/dev/null || echo "[]")
+  else
+    REDIRECTS=$(REDIRECTS_YAML="$REDIRECTS_YAML" python3 -c "
+import yaml, json, os
+with open(os.environ['REDIRECTS_YAML']) as f:
+    data = yaml.safe_load(f) or {}
+    print(json.dumps(data.get('redirects', []), separators=(',',':')))
+" 2>/dev/null || echo "[]")
+  fi
+elif [ -f "$REDIRECTS_CSV" ]; then
+  REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_CSV" python3 -c "
+import csv, json, os
+with open(os.environ['REDIRECTS_CSV']) as f:
+    reader = csv.DictReader(f)
+    redirects = []
+    for row in reader:
+        if not row.get('from') or not row.get('to'):
+            continue
+        redirects.append({
+            'from': row['from'].strip(),
+            'to': row['to'].strip(),
+            'status': int(row.get('status', 301) or 301),
+        })
+    print(json.dumps(redirects, separators=(',',':')))
+" 2>/dev/null || echo "[]")
+fi
+
+REDIRECT_COUNT=$(echo "$REDIRECTS" | jq 'length')
+if [ "$REDIRECT_COUNT" -gt 0 ]; then
+  echo "Found $REDIRECT_COUNT redirects"
+  BODY=$(echo "$BODY" | jq --argjson redirects "$REDIRECTS" '. + {redirects: $redirects}')
+fi
+
 # Send is_private setting if set to true (internal-only, no HTTPRoute/public DNS)
 IS_PRIVATE=$(echo "$CONFIG" | jq -r '.is_private // empty' 2>/dev/null || echo "")
 if [ "$IS_PRIVATE" = "true" ]; then

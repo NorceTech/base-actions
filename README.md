@@ -1214,6 +1214,75 @@ snippets:
 
 **Blocked directives** (security): `proxy_pass`, `upstream`, `include`, `env`, `lua_*`, `ssl_certificate`, `load_module` — returns a 400 error if used.
 
+## Bulk Redirects
+
+For large redirect lists (migrations, SEO restructures, brand changes), use `.base/redirects.yaml` instead of writing raw nginx snippets. Supports up to **200,000 redirects per deployment**. The backend auto-chunks the list across multiple NGINX Gateway Fabric `SnippetsFilter` resources to stay under Kubernetes object size limits.
+
+**YAML format** (recommended for < 1,000 entries):
+
+```yaml
+# .base/redirects.yaml
+redirects:
+  - from: /gamla-kategorin/produkt-a
+    to: /nya-kategorin/produkt-a
+    status: 301
+  - from: /kampanj-2023
+    to: https://example.com/kampanjer
+    status: 301
+```
+
+**CSV format** (recommended for large lists):
+
+```csv
+# .base/redirects.csv
+from,to,status
+/gamla-kategorin/produkt-a,/nya-kategorin/produkt-a,301
+/kampanj-2023,https://example.com/kampanjer,301
+```
+
+**Fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `from` | Yes | Source path (must start with `/`, no whitespace or quotes) |
+| `to` | Yes | Target path (starts with `/`) or absolute URL (`https://...`) |
+| `status` | No | HTTP status: `301` (default), `302`, `307`, or `308` |
+
+**Limits:**
+
+- Max **200,000 redirects** per deployment
+- Max **2,048 characters** per `from` and `to` path
+- Paths cannot contain whitespace or quotes (`"`)
+
+**Performance:**
+
+- Redirects use NGINX `map` directives — **O(1) lookup** regardless of list size
+- NGINX config reload takes **< 1 second** with 40,000 entries, **< 5 seconds** with 160,000 entries
+- No memory overhead per request
+
+**How it works:**
+
+1. Partner commits `.base/redirects.yaml` or `.base/redirects.csv` to their app repo
+2. CI/CD deploy reads the file and sends entries to the Base API
+3. Backend splits the list into chunks of ~1.5 MB each
+4. Each chunk becomes a separate `SnippetsFilter` resource (e.g., `redirects-1.yaml`, `redirects-2.yaml`)
+5. The environment's `HTTPRoute` references all chunks via `filters` array
+6. NGINX Gateway Fabric applies all chunks — all redirects become active simultaneously
+
+**Typical output:**
+
+- 40k redirects → 2 chunks (~22k + ~18k entries)
+- 160k redirects → 8 chunks (~20k entries each)
+- Max 16 chunks per app (Gateway API HTTPRoute filter limit)
+
+**Rollback:**
+
+Remove or empty `.base/redirects.yaml` and deploy. The backend cleans up stale chunks automatically.
+
+**Coexistence with `.base/nginx.yaml`:**
+
+You can use both files in the same app. Custom NGINX snippets (proxy buffers, headers) and bulk redirects generate separate `SnippetsFilter` resources, all referenced from the same `HTTPRoute`.
+
 ## Internal-Only Deployments
 
 For apps that should only be accessible within the cluster (bots, backend services, MCP servers), set `is_private: true` in the environment config:
