@@ -199,16 +199,18 @@ with open(os.environ['REDIRECTS_YAML']) as f:
   fi
 elif [ -f "$REDIRECTS_CSV" ]; then
   REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_CSV" python3 -c "
-import csv, json, os
-with open(os.environ['REDIRECTS_CSV']) as f:
+import csv, json, os, codecs
+with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
     reader = csv.DictReader(f)
     redirects = []
     for row in reader:
-        if not row.get('from') or not row.get('to'):
+        fr = (row.get('from') or '').strip()
+        to = (row.get('to') or '').strip()
+        if not fr or not to:
             continue
         redirects.append({
-            'from': row['from'].strip(),
-            'to': row['to'].strip(),
+            'from': fr,
+            'to': to,
             'status': int(row.get('status', 301) or 301),
         })
     print(json.dumps(redirects, separators=(',',':')))
