@@ -248,7 +248,7 @@ if [ "$IS_PRIVATE" = "true" ]; then
   jq '. + {is_private: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
+RESPONSE=$(curl -s -w "\n%{http_code}" --noproxy '*' -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
   -d "@${BODY_FILE}")
