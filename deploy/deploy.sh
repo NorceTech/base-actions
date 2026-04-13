@@ -235,27 +235,32 @@ with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
 " 2>/dev/null || echo "[]")
 fi
 
-REDIRECT_COUNT=$(echo "$REDIRECTS" | jq 'length')
+# Build the final request body as a FILE to avoid shell ARG_MAX limits.
+# Large redirect payloads (112k entries = ~12MB) exceed bash variable/argument capacity.
+BODY_FILE=$(mktemp)
+echo "$BODY" > "$BODY_FILE"
+
+# Merge redirects into body file (never pass through shell variable)
+REDIRECTS_TMP=$(mktemp)
+echo "$REDIRECTS" > "$REDIRECTS_TMP"
+REDIRECT_COUNT=$(jq 'length' "$REDIRECTS_TMP")
 if [ "$REDIRECT_COUNT" -gt 0 ]; then
   echo "Found $REDIRECT_COUNT redirects"
-  # Write redirects to temp file to avoid ARG_MAX shell limit (~2MB).
-  # 40k entries = ~4MB JSON which exceeds jq --argjson argument length.
-  REDIRECTS_TMP=$(mktemp)
-  echo "$REDIRECTS" > "$REDIRECTS_TMP"
-  BODY=$(echo "$BODY" | jq --slurpfile redirects "$REDIRECTS_TMP" '. + {redirects: $redirects[0]}')
-  rm -f "$REDIRECTS_TMP"
+  jq --slurpfile redirects "$REDIRECTS_TMP" '. + {redirects: $redirects[0]}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
+rm -f "$REDIRECTS_TMP"
 
 # Send is_private setting if set to true (internal-only, no HTTPRoute/public DNS)
 IS_PRIVATE=$(echo "$CONFIG" | jq -r '.is_private // empty' 2>/dev/null || echo "")
 if [ "$IS_PRIVATE" = "true" ]; then
-  BODY=$(echo "$BODY" | jq '. + {is_private: true}')
+  jq '. + {is_private: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
-  -d "$BODY")
+  -d "@${BODY_FILE}")
+rm -f "$BODY_FILE"
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
