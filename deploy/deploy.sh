@@ -238,7 +238,12 @@ fi
 REDIRECT_COUNT=$(echo "$REDIRECTS" | jq 'length')
 if [ "$REDIRECT_COUNT" -gt 0 ]; then
   echo "Found $REDIRECT_COUNT redirects"
-  BODY=$(echo "$BODY" | jq --argjson redirects "$REDIRECTS" '. + {redirects: $redirects}')
+  # Write redirects to temp file to avoid ARG_MAX shell limit (~2MB).
+  # 40k entries = ~4MB JSON which exceeds jq --argjson argument length.
+  REDIRECTS_TMP=$(mktemp)
+  echo "$REDIRECTS" > "$REDIRECTS_TMP"
+  BODY=$(echo "$BODY" | jq --slurpfile redirects "$REDIRECTS_TMP" '. + {redirects: $redirects[0]}')
+  rm -f "$REDIRECTS_TMP"
 fi
 
 # Send is_private setting if set to true (internal-only, no HTTPRoute/public DNS)
