@@ -182,14 +182,14 @@ fi
 # Read redirects file (.yaml or .csv) for bulk URL redirects.
 # Supports up to 50k redirects per deployment. Backend auto-chunks across
 # multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
-REDIRECTS="[]"
+# Parse redirects to a TEMP FILE (never a shell variable — 100k+ entries = 10MB+).
 REDIRECTS_INPUT="${REDIRECTS_FILE:-.base/redirects.yaml}"
+REDIRECTS_TMP=$(mktemp)
+echo "[]" > "$REDIRECTS_TMP"
 
-# Detect file type: if input is .csv → CSV parser, otherwise try YAML then CSV fallback
 if [ -f "$REDIRECTS_INPUT" ]; then
   if [[ "$REDIRECTS_INPUT" == *.csv ]]; then
-    # Explicit CSV file
-    REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_INPUT" python3 -c "
+    REDIRECTS_CSV="$REDIRECTS_INPUT" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import csv, json, os
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
     reader = csv.DictReader(f)
@@ -199,50 +199,42 @@ with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
         to = (row.get('to') or '').strip()
         if not fr or not to: continue
         redirects.append({'from': fr, 'to': to, 'status': int(row.get('status', 301) or 301)})
-    print(json.dumps(redirects, separators=(',',':')))
-" 2>/dev/null || echo "[]")
+with open(os.environ['REDIRECTS_TMP'], 'w') as out:
+    json.dump(redirects, out, separators=(',',':'))
+" 2>/dev/null
   else
-    # YAML file
     if command -v yq &> /dev/null; then
-      REDIRECTS=$(yq -o=json -I=0 '.redirects // []' "$REDIRECTS_INPUT" 2>/dev/null || echo "[]")
+      yq -o=json -I=0 '.redirects // []' "$REDIRECTS_INPUT" > "$REDIRECTS_TMP" 2>/dev/null || echo "[]" > "$REDIRECTS_TMP"
     else
-      REDIRECTS=$(REDIRECTS_YAML="$REDIRECTS_INPUT" python3 -c "
+      REDIRECTS_YAML="$REDIRECTS_INPUT" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import yaml, json, os
 with open(os.environ['REDIRECTS_YAML']) as f:
     data = yaml.safe_load(f) or {}
-    print(json.dumps(data.get('redirects', []), separators=(',',':')))
-" 2>/dev/null || echo "[]")
+with open(os.environ['REDIRECTS_TMP'], 'w') as out:
+    json.dump(data.get('redirects', []), out, separators=(',',':'))
+" 2>/dev/null
     fi
   fi
-# Fallback: try .csv sibling if .yaml was specified but doesn't exist
 elif [ -f "${REDIRECTS_INPUT%.yaml}.csv" ]; then
-  REDIRECTS=$(REDIRECTS_CSV="$REDIRECTS_CSV" python3 -c "
-import csv, json, os, codecs
+  REDIRECTS_CSV="${REDIRECTS_INPUT%.yaml}.csv" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
+import csv, json, os
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
     reader = csv.DictReader(f)
     redirects = []
     for row in reader:
         fr = (row.get('from') or '').strip()
         to = (row.get('to') or '').strip()
-        if not fr or not to:
-            continue
-        redirects.append({
-            'from': fr,
-            'to': to,
-            'status': int(row.get('status', 301) or 301),
-        })
-    print(json.dumps(redirects, separators=(',',':')))
-" 2>/dev/null || echo "[]")
+        if not fr or not to: continue
+        redirects.append({'from': fr, 'to': to, 'status': int(row.get('status', 301) or 301)})
+with open(os.environ['REDIRECTS_TMP'], 'w') as out:
+    json.dump(redirects, out, separators=(',',':'))
+" 2>/dev/null
 fi
 
-# Build the final request body as a FILE to avoid shell ARG_MAX limits.
-# Large redirect payloads (112k entries = ~12MB) exceed bash variable/argument capacity.
+# Build the final request body as a FILE (all large data stays on disk, never in shell vars).
 BODY_FILE=$(mktemp)
 echo "$BODY" > "$BODY_FILE"
 
-# Merge redirects into body file (never pass through shell variable)
-REDIRECTS_TMP=$(mktemp)
-echo "$REDIRECTS" > "$REDIRECTS_TMP"
 REDIRECT_COUNT=$(jq 'length' "$REDIRECTS_TMP")
 if [ "$REDIRECT_COUNT" -gt 0 ]; then
   echo "Found $REDIRECT_COUNT redirects"
