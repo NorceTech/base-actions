@@ -183,11 +183,22 @@ fi
 # Supports up to 50k redirects per deployment. Backend auto-chunks across
 # multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
 # Parse redirects to a TEMP FILE (never a shell variable — 100k+ entries = 10MB+).
+#
+# REDIRECTS_FILE_FOUND is set true when the file exists. We forward the
+# redirects field to the backend whenever the file is present (even empty)
+# so the backend can distinguish "customer explicitly cleared all redirects"
+# (REDIRECTS_FILE_FOUND=true, count=0) from "no redirects config in repo"
+# (REDIRECTS_FILE_FOUND=false). The cleared case must trigger a reconcile
+# that prunes stale chunks and drops HTTPRoute filter refs; without this
+# signal, the backend would fall into its "don't touch" path and stale
+# chunks from previous deploys would leak forever.
 REDIRECTS_INPUT="${REDIRECTS_FILE:-.base/redirects.yaml}"
 REDIRECTS_TMP=$(mktemp)
 echo "[]" > "$REDIRECTS_TMP"
+REDIRECTS_FILE_FOUND=false
 
 if [ -f "$REDIRECTS_INPUT" ]; then
+  REDIRECTS_FILE_FOUND=true
   if [[ "$REDIRECTS_INPUT" == *.csv ]]; then
     REDIRECTS_CSV="$REDIRECTS_INPUT" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import csv, json, os
@@ -216,6 +227,7 @@ with open(os.environ['REDIRECTS_TMP'], 'w') as out:
     fi
   fi
 elif [ -f "${REDIRECTS_INPUT%.yaml}.csv" ]; then
+  REDIRECTS_FILE_FOUND=true
   REDIRECTS_CSV="${REDIRECTS_INPUT%.yaml}.csv" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import csv, json, os
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
@@ -236,8 +248,16 @@ BODY_FILE=$(mktemp)
 echo "$BODY" > "$BODY_FILE"
 
 REDIRECT_COUNT=$(jq 'length' "$REDIRECTS_TMP")
-if [ "$REDIRECT_COUNT" -gt 0 ]; then
-  echo "Found $REDIRECT_COUNT redirects"
+# Forward the redirects field whenever the file was present in the repo —
+# even when empty — so the backend can distinguish "clear all redirects"
+# from "no redirects config present". When the file was absent we leave
+# the field off entirely (backend treats undefined as "don't touch").
+if [ "$REDIRECTS_FILE_FOUND" = "true" ]; then
+  if [ "$REDIRECT_COUNT" -gt 0 ]; then
+    echo "Found $REDIRECT_COUNT redirects"
+  else
+    echo "Redirects file present but empty — signaling backend to clear any existing redirects"
+  fi
   jq --slurpfile redirects "$REDIRECTS_TMP" '. + {redirects: $redirects[0]}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 rm -f "$REDIRECTS_TMP"
