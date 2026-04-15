@@ -242,10 +242,16 @@ if [ "$REDIRECT_COUNT" -gt 0 ]; then
 fi
 rm -f "$REDIRECTS_TMP"
 
-# Send is_private setting if set to true (internal-only, no HTTPRoute/public DNS)
+# Forward is_private setting when explicitly set in config (either true or false).
+# Previously only `true` was forwarded which made `is_private: false` in config.yaml
+# a silent no-op — the backend would fall back to the DB value, so an env that was
+# flipped to private in the portal could not be flipped back via config.yaml.
+# Now we forward both values whenever the field is present.
 IS_PRIVATE=$(echo "$CONFIG" | jq -r '.is_private // empty' 2>/dev/null || echo "")
 if [ "$IS_PRIVATE" = "true" ]; then
   jq '. + {is_private: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
+elif [ "$IS_PRIVATE" = "false" ]; then
+  jq '. + {is_private: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
 # Large redirect deploys can take >60s (parsing + chunking + git commit with retries).
