@@ -756,6 +756,7 @@ Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
 | `image` | No | app name | Container image name (when image name differs from app) |
 | `config_file` | No | `.base/config.yaml` | Path to config file |
 | `nginx_config_file` | No | `.base/nginx.yaml` | Path to custom NGINX config (proxy buffers, headers, etc.) |
+| `redirects_file` | No | `.base/redirects.yaml` | Path to bulk redirects file (`.yaml` or `.csv`). Falls back to `.csv` if the `.yaml` is not present. See [Bulk Redirects](#bulk-redirects). |
 | `api_url` | No | `https://base-api.norce.tech` | Base API URL |
 | `api_key` | Yes | - | API key (identifies partner) |
 | `wait_for_healthy` | No | `true` | Wait for deployment to become healthy |
@@ -769,15 +770,16 @@ Use `sync-secrets` to sync GitHub Secrets to KeyVault (see above).
 | `git_commit_sha` | Commit SHA for the deployment |
 | `previous_image_tag` | Previous image tag |
 | `message` | Result message |
-| `health_status` | Final health status (Healthy, Progressing, Degraded, Timeout) |
-| `sync_status` | Final sync status |
+| `health_status` | Final health status (`Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing`, `Timeout`) |
+| `sync_status` | Final sync status (`Synced`, `OutOfSync`, etc.) |
+| `preview_url` | Preview URL for staged deployments (populated when `health_status=Suspended`). Empty for standard deployments. |
 
 #### Health Status Polling
 
 By default, the deploy action waits for your deployment to become healthy before completing. This ensures your CI/CD pipeline reflects the actual deployment status.
 
 **What it checks:**
-- Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`
+- Health status: `Healthy`, `Progressing`, `Degraded`, `Missing`, `Suspended` (staged deployments — preview ready, awaiting promotion)
 - Image tag matches the deployed tag
 
 **Example output:**

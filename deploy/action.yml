@@ -28,7 +28,7 @@ inputs:
     required: false
     default: '.base/nginx.yaml'
   redirects_file:
-    description: 'Path to redirects file (.yaml or .csv) for bulk redirects. Supports up to 50k entries.'
+    description: 'Path to redirects file (.yaml or .csv) for bulk redirects. Supports up to 200,000 entries.'
     required: false
     default: '.base/redirects.yaml'
   api_url:

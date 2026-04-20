@@ -180,7 +180,7 @@ with open(os.environ['NGINX_CONFIG_FILE']) as f:
 fi
 
 # Read redirects file (.yaml or .csv) for bulk URL redirects.
-# Supports up to 50k redirects per deployment. Backend auto-chunks across
+# Supports up to 200,000 redirects per deployment. Backend auto-chunks across
 # multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
 # Parse redirects to a TEMP FILE (never a shell variable — 100k+ entries = 10MB+).
 #
