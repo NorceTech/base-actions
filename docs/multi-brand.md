@@ -109,28 +109,28 @@ environments:
   # Shared across every brand and environment
   global:
     - github: SHARED_API_KEY
-      vault: shared-api-key
+      keyvault: shared-api-key
 
   # Per brand+environment
   brand-a-stage:
     - github: BRAND_A_DB_PASSWORD_STAGE
-      vault: database-password
+      keyvault: database-password
 
   brand-a-prod:
     - github: BRAND_A_DB_PASSWORD_PROD
-      vault: database-password
+      keyvault: database-password
     - github: BRAND_A_PAYMENT_KEY
-      vault: payment-secret-key
+      keyvault: payment-secret-key
 
   brand-b-stage:
     - github: BRAND_B_DB_PASSWORD_STAGE
-      vault: database-password
+      keyvault: database-password
 
   brand-b-prod:
     - github: BRAND_B_DB_PASSWORD_PROD
-      vault: database-password
+      keyvault: database-password
     - github: BRAND_B_PAYMENT_KEY
-      vault: payment-secret-key
+      keyvault: payment-secret-key
 ```
 
 ---

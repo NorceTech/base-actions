@@ -12,17 +12,17 @@ You only run `sync-secrets` **when a secret value changes**. Config changes in `
 environments:
   global:
     - github: SHARED_API_KEY
-      vault: shared-api-key
+      keyvault: shared-api-key
 
   stage:
     - github: DATABASE_PASSWORD_STAGE
-      vault: database-password
+      keyvault: database-password
 
   prod:
     - github: DATABASE_PASSWORD_PROD
-      vault: database-password
+      keyvault: database-password
     - github: STRIPE_SECRET_KEY
-      vault: stripe-secret-key
+      keyvault: stripe-secret-key
 ```
 
 2. In the workflow, pass the actual values via `env:` — the action reads them and pushes them into the vault:

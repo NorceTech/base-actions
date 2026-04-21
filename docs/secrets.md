@@ -20,33 +20,33 @@ environments:
   # Global secrets — synced to every environment
   global:
     - github: SHARED_API_KEY
-      vault: shared-api-key
+      keyvault: shared-api-key
 
   # Per-environment secrets
   stage:
     - github: DATABASE_PASSWORD_STAGE
-      vault: database-password
+      keyvault: database-password
     - github: API_SECRET_STAGE
-      vault: api-secret
+      keyvault: api-secret
 
   prod:
     - github: DATABASE_PASSWORD_PROD
-      vault: database-password
+      keyvault: database-password
     - github: API_SECRET_PROD
-      vault: api-secret
+      keyvault: api-secret
     - github: STRIPE_SECRET_KEY
-      vault: stripe-secret-key
+      keyvault: stripe-secret-key
 ```
 
 | Field | Description |
 |-------|-------------|
 | `github` | Name of the GitHub Actions secret on your repo |
-| `vault` | Name the secret will have in the platform vault (and inside the running container) |
+| `keyvault` | Name the secret will have in the platform vault (and inside the running container) |
 
 **Naming rules for vault entries**
 
-- Global secrets are stored as `app-<vault-name>` (e.g. `app-shared-api-key`)
-- Per-environment secrets are stored as `app-<env>-<vault-name>` (e.g. `app-prod-database-password`)
+- Global secrets are stored as `app-<keyvault-name>` (e.g. `app-shared-api-key`)
+- Per-environment secrets are stored as `app-<env>-<keyvault-name>` (e.g. `app-prod-database-password`)
 - Global secrets are **always** synced, even when targeting a single environment
 
 ---
@@ -71,15 +71,15 @@ Use `<env>-preview` to inject a different secret value during the canary phase o
 environments:
   global:
     - github: SHARED_API_KEY
-      vault: shared-api-key
+      keyvault: shared-api-key
 
   prod:
     - github: STRIPE_SECRET_KEY
-      vault: stripe-secret-key
+      keyvault: stripe-secret-key
 
   prod-preview:                                # Active only during staged deploys on prod
     - github: STRIPE_TEST_KEY
-      vault: stripe-secret-key                 # Same vault name → overrides the live value
+      keyvault: stripe-secret-key                 # Same vault name → overrides the live value
 ```
 
 During a staged deploy on `prod`, the canary instances receive:
