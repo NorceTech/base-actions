@@ -6,8 +6,17 @@ echo "::group::⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}
 START_TIME=$(date +%s)
 POLL_INTERVAL=10
 SYNC_GRACE=30
+# TAG_GRACE covers the window between the deploy API returning OK (git commit
+# written) and ArgoCD reconciling the new tag into the partner cluster. During
+# this window the Base API reports the PREVIOUS deploy's status — if that was
+# Degraded/Missing (e.g. the very first deploy to a new env had a placeholder
+# :unknown tag), the old logic would exit 1 at t=0s before ArgoCD even started
+# syncing our change. We wait up to TAG_GRACE seconds for `CURRENT_TAG ==
+# IMAGE_TAG` before treating any Degraded/Missing state as authoritative.
+TAG_GRACE=60
 LAST_STATUS=""
 UNKNOWN_WARNED=false
+TAG_WAIT_WARNED=false
 
 while true; do
   CURRENT_TIME=$(date +%s)
@@ -30,6 +39,10 @@ while true; do
     echo "║   • New environment — platform is still provisioning it"
     echo "║   • The deploy is submitted and will go live automatically"
     echo "║   • Check the Base Portal for status"
+    fi
+    if [ "${LAST_TAG:-unknown}" != "$IMAGE_TAG" ] && [ "${LAST_TAG:-unknown}" != "unknown" ]; then
+    echo "║   • ArgoCD never reconciled ${IMAGE_TAG} — cluster still on ${LAST_TAG}"
+    echo "║     (check ArgoCD for the Application, or retry)"
     fi
     echo "║   • Image pull error (wrong tag or ACR permissions)"
     echo "║   • Application crash loop (check pod logs)"
@@ -136,6 +149,19 @@ while true; do
   if [ "$HEALTH" == "Unknown" ] && [ "$SYNC" == "Unknown" ] && [ "$UNKNOWN_WARNED" == "false" ] && [ $ELAPSED -ge 30 ]; then
     UNKNOWN_WARNED=true
     echo "  ℹ️  Environment not found yet — platform is provisioning the new environment..."
+  fi
+
+  # Stale-tag grace: the reported status is for the PREVIOUS deploy because
+  # ArgoCD hasn't reconciled the new Git commit onto the partner cluster yet.
+  # Skip fail-fast paths (Degraded/Missing) until either the tag matches or we
+  # exhaust TAG_GRACE — at which point the reported state is genuinely ours.
+  if [ "$CURRENT_TAG" != "$IMAGE_TAG" ] && [ $ELAPSED -lt $TAG_GRACE ]; then
+    if [ "$TAG_WAIT_WARNED" == "false" ]; then
+      TAG_WAIT_WARNED=true
+      echo "  ⏳ ArgoCD hasn't picked up ${IMAGE_TAG} yet (current: ${CURRENT_TAG}) — waiting up to ${TAG_GRACE}s before evaluating health"
+    fi
+    sleep $POLL_INTERVAL
+    continue
   fi
 
   if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
