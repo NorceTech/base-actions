@@ -274,6 +274,18 @@ elif [ "$IS_PRIVATE" = "false" ]; then
   jq '. + {is_private: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
+# Forward vpn_only setting when explicitly set in config (either true or false).
+# Same forwarding semantics as is_private — both values flow so the field can be
+# toggled either direction from config.yaml. The backend rejects vpn_only=true
+# (409) on partners that don't have an internal Gateway provisioned, and (400)
+# when vpn_only and is_private are both true.
+VPN_ONLY=$(echo "$CONFIG" | jq -r '.vpn_only // empty' 2>/dev/null || echo "")
+if [ "$VPN_ONLY" = "true" ]; then
+  jq '. + {vpn_only: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
+elif [ "$VPN_ONLY" = "false" ]; then
+  jq '. + {vpn_only: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
+fi
+
 # Large redirect deploys can take >60s (parsing + chunking + git commit with retries).
 # --max-time 180 prevents curl from hanging indefinitely if backend is slow.
 # --connect-timeout 10 fails fast if backend is unreachable.
