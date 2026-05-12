@@ -37,6 +37,15 @@ validate_env() {
 
 validate_env "$ENVIRONMENT" "environment"
 
+# Runtime profile knobs (set by action.yml; defaults match public behavior).
+# ENABLE_HEALTH_PROBE: when 'true', run a 5s GET /health pre-flight before the
+# deploy POST to surface DNS/proxy/connectivity errors with an actionable hint.
+# USE_NOPROXY: when 'true', pass `--noproxy '*'` to the deploy curl so it
+# bypasses any configured HTTP(S) proxy. Internal callers leave this off
+# because the internal API is only reachable through the corporate proxy.
+ENABLE_HEALTH_PROBE="${ENABLE_HEALTH_PROBE:-false}"
+USE_NOPROXY="${USE_NOPROXY:-true}"
+
 # Read environment config from YAML
 CONFIG="{}"
 GLOBAL_ENV="[]"
@@ -286,10 +295,23 @@ elif [ "$VPN_ONLY" = "false" ]; then
   jq '. + {vpn_only: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
+# Pre-flight: verify API is reachable (surfaces DNS/proxy/connectivity errors early)
+if [ "$ENABLE_HEALTH_PROBE" = "true" ]; then
+  if ! curl -s --max-time 5 -o /dev/null "${API_URL}/health" 2>&1; then
+    echo ""
+    echo "::error::Cannot reach Base API at ${API_URL}"
+    echo "Hint: check DNS resolution, proxy settings (HTTPS_PROXY, NO_PROXY), and network connectivity."
+    rm -f "$BODY_FILE"
+    exit 1
+  fi
+fi
+
 # Large redirect deploys can take >60s (parsing + chunking + git commit with retries).
 # --max-time 180 prevents curl from hanging indefinitely if backend is slow.
 # --connect-timeout 10 fails fast if backend is unreachable.
-RESPONSE=$(curl -s -w "\n%{http_code}" --noproxy '*' --max-time 180 --connect-timeout 10 \
+NOPROXY_ARGS=()
+[ "$USE_NOPROXY" = "true" ] && NOPROXY_ARGS=(--noproxy '*')
+RESPONSE=$(curl -s -w "\n%{http_code}" "${NOPROXY_ARGS[@]}" --max-time 180 --connect-timeout 10 \
   -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
