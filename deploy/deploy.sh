@@ -341,6 +341,35 @@ if [ "$HTTP_CODE" -ne 200 ]; then
     echo "║ Details: $DETAILS"
   fi
 
+  # Special-case redirect-limit errors. Backend returns 400 with stable codes
+  # REDIRECT_CHUNK_LIMIT (input would chunk to >16 NGF SnippetsFilters) or
+  # HTTPROUTE_FILTER_LIMIT (final HTTPRoute would carry >16 filter refs). Both
+  # mean "too many redirects" — the silent multi-rule split that used to drop
+  # the trailing chunks at runtime is gone (phonelife regression 2026-06-02),
+  # so the user has to reduce the list. Print a prominent, actionable block
+  # before the generic HTTP-code hints so the cause is obvious.
+  case "$ERROR_CODE" in
+    REDIRECT_CHUNK_LIMIT|HTTPROUTE_FILTER_LIMIT)
+      echo "║"
+      echo "║ 🚧 TOO MANY REDIRECTS"
+      echo "║   Source file: $REDIRECTS_INPUT"
+      echo "║   Entries in this deploy: ${REDIRECT_COUNT:-unknown}"
+      echo "║"
+      echo "║   The platform chunks redirects into NGF SnippetsFilters"
+      echo "║   under the Gateway API per-rule cap of 16. Effective"
+      echo "║   ceiling per environment:"
+      echo "║     • ~160,000 entries with very short paths"
+      echo "║     • ~120,000 entries at realistic URL lengths (path-heavy"
+      echo "║       partner catalogues hit the byte cap before the entry"
+      echo "║       cap, so ~7,500 entries/chunk × 16 chunks)"
+      echo "║"
+      echo "║   Fix: reduce the entries in $REDIRECTS_INPUT below the"
+      echo "║   cap and re-deploy. If you genuinely need more, contact"
+      echo "║   the Norce Base team — the cap is a Gateway API constraint"
+      echo "║   that needs an architecture change to lift safely."
+      ;;
+  esac
+
   case "$HTTP_CODE" in
     401)
       echo "║"
@@ -356,10 +385,12 @@ if [ "$HTTP_CODE" -ne 200 ]; then
       echo "║   to the repository name: '${REPO_NAME}'."
       ;;
     400)
-      echo "║"
-      echo "║ 📋 Fix: The request payload is invalid."
-      echo "║   Verify that 'environment' and 'image_tag' are correct."
-      echo "║   Environment must be lowercase alphanumeric with hyphens."
+      if [ "$ERROR_CODE" != "REDIRECT_CHUNK_LIMIT" ] && [ "$ERROR_CODE" != "HTTPROUTE_FILTER_LIMIT" ]; then
+        echo "║"
+        echo "║ 📋 Fix: The request payload is invalid."
+        echo "║   Verify that 'environment' and 'image_tag' are correct."
+        echo "║   Environment must be lowercase alphanumeric with hyphens."
+      fi
       ;;
     500)
       echo "║"
@@ -383,7 +414,17 @@ if [ "$HTTP_CODE" -ne 200 ]; then
   echo "╚══════════════════════════════════════════════════════"
   echo ""
 
-  echo "::error::Deploy failed ($HTTP_CODE): ${ERROR_MSG:-Unknown error}"
+  # Use a sharper GitHub Actions annotation for the redirect limit so it shows
+  # up at the top of the run summary without the partner having to scroll
+  # through the boxed log.
+  case "$ERROR_CODE" in
+    REDIRECT_CHUNK_LIMIT|HTTPROUTE_FILTER_LIMIT)
+      echo "::error file=${REDIRECTS_INPUT}::Too many redirects (${REDIRECT_COUNT:-?} entries in ${REDIRECTS_INPUT}). Cap is ~120-160k per environment — reduce the list or contact NorceTech. See job log for details."
+      ;;
+    *)
+      echo "::error::Deploy failed ($HTTP_CODE): ${ERROR_MSG:-Unknown error}"
+      ;;
+  esac
 
   echo "success=false" >> $GITHUB_OUTPUT
   echo "deploy_success=false" >> $GITHUB_OUTPUT
