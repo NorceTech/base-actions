@@ -166,6 +166,10 @@ fi
 
 # Send auto_promote setting if specified (overrides portal setting for this environment)
 if [ -n "${AUTO_PROMOTE:-}" ]; then
+  if [ "$AUTO_PROMOTE" != "true" ] && [ "$AUTO_PROMOTE" != "false" ]; then
+    echo "::error::AUTO_PROMOTE must be 'true' or 'false', got: '${AUTO_PROMOTE}'. Set auto_promote to true or false in your workflow."
+    exit 1
+  fi
   BODY=$(echo "$BODY" | jq --argjson auto_promote "$AUTO_PROMOTE" '. + {auto_promote: $auto_promote}')
 fi
 

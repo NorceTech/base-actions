@@ -107,14 +107,15 @@ while true; do
     fi
 
     echo "::endgroup::"
-    echo "✅ Preview deployed and awaiting promotion! (${ELAPSED}s)"
+    echo "::warning::Canary staged — traffic has NOT shifted to the new version. (${ELAPSED}s)"
+    echo "   auto_promote=false — manual promotion required."
     if [ -n "$PREVIEW_URL" ]; then
       echo "   Preview URL: $PREVIEW_URL"
     fi
     echo "   Promote via Base Portal or CI/CD when ready."
     echo "health_status=$HEALTH" >> $GITHUB_OUTPUT
     echo "sync_status=$SYNC" >> $GITHUB_OUTPUT
-    echo "healthy=true" >> $GITHUB_OUTPUT
+    echo "healthy=suspended" >> $GITHUB_OUTPUT
     echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
     exit 0
   fi
