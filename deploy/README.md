@@ -159,6 +159,31 @@ wait_timeout: '600'   # 10 minutes
 | `sync_status` | Final sync status (`Synced`, `OutOfSync`, etc.) |
 | `preview_url` | Preview URL for staged deploys. Populated when `health_status=Suspended`; empty for standard deploys. |
 
+## Error Handling
+
+When the deploy API call fails, the action exits with code 1 and prints an actionable diagnostic box:
+
+| Situation | Message |
+|-----------|---------|
+| curl timeout (`--max-time 180`) | `Timeout: backend did not respond within 180s — check the portal` |
+| Connection refused / DNS failure | `Connection refused or DNS failure — verify API_URL is reachable` |
+| HTTP 4xx / 5xx | Response body included in the error box |
+
+In all cases `deploy_success=false` is written to `$GITHUB_OUTPUT` so downstream steps can branch on it.
+
+## Development
+
+A self-contained test script covers the curl error-handling and happy-path scenarios:
+
+```bash
+bash deploy/test-deploy-curl.sh
+```
+
+The script requires `python3` (stdlib only) and validates:
+1. `|| CURL_EXIT=$?` captures exit codes 28/7/0 under `set -euo pipefail`
+2. Connection-refused run exits 1 with the friendly error box
+3. Mock-HTTP-200 run exits 0 with correct `GITHUB_OUTPUT` values
+
 ## Related Docs
 
 - [`.base/config.yaml` reference](../docs/config.md)
