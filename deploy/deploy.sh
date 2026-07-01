@@ -311,12 +311,12 @@ fi
 # --connect-timeout 10 fails fast if backend is unreachable.
 NOPROXY_ARGS=()
 [ "$USE_NOPROXY" = "true" ] && NOPROXY_ARGS=(--noproxy '*')
+CURL_EXIT=0
 RESPONSE=$(curl -s -w "\n%{http_code}" "${NOPROXY_ARGS[@]}" --max-time 180 --connect-timeout 10 \
   -X POST "${API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
-  -d "@${BODY_FILE}")
-CURL_EXIT=$?
+  -d "@${BODY_FILE}") || CURL_EXIT=$?
 rm -f "$BODY_FILE"
 
 if [ "$CURL_EXIT" -ne 0 ]; then
