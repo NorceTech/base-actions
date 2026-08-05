@@ -17,6 +17,26 @@ TAG_GRACE=60
 LAST_STATUS=""
 UNKNOWN_WARNED=false
 TAG_WAIT_WARNED=false
+# DEGRADED_GRACE complements TAG_GRACE. TAG_GRACE only protects the window while
+# the reported tag is still the PREVIOUS deploy's. But for staged/canary apps the
+# status endpoint reports the STABLE ReplicaSet's tag, which never matches
+# IMAGE_TAG until promote — so TAG_GRACE expires and the new canary is left
+# unprotected while it starts up (image pull, slow boot, probes not yet green)
+# and briefly reports Degraded before it reaches its first pause step (canary)
+# or passes readiness probes (direct deploy).
+# Require Degraded/Missing to PERSIST for DEGRADED_GRACE before failing; the
+# streak resets only on Healthy or Suspended — not on Progressing, which is just
+# a pod restarting and not a genuine recovery. A genuine crash-loop stays
+# Degraded (or Degraded/Progressing/Degraded) past the window and still fails.
+# NOTE: TAG_GRACE and DEGRADED_GRACE are additive — worst-case wait before a
+# Degraded verdict is TAG_GRACE + DEGRADED_GRACE. Keep TIMEOUT above their sum.
+DEGRADED_GRACE=${DEGRADED_GRACE:-60}
+DEGRADED_SINCE=-1   # ELAPSED at which the current Degraded streak began (-1 = none)
+
+MIN_USEFUL_TIMEOUT=$((TAG_GRACE + DEGRADED_GRACE + SYNC_GRACE + 30))
+if [ "$TIMEOUT" -lt "$MIN_USEFUL_TIMEOUT" ]; then
+  echo "::warning::TIMEOUT=${TIMEOUT}s is less than combined grace periods (${MIN_USEFUL_TIMEOUT}s) — a degraded deployment may always timeout rather than fail fast. Consider increasing wait_timeout."
+fi
 
 while true; do
   CURRENT_TIME=$(date +%s)
@@ -78,6 +98,14 @@ while true; do
   LAST_HEALTH="$HEALTH"
   LAST_SYNC="$SYNC"
   LAST_TAG="$CURRENT_TAG"
+
+  # Reset the Degraded streak on Healthy. Progressing is a pod restarting, not
+  # a recovery — resetting on it would let a crash-loop oscillate indefinitely
+  # without accumulating toward DEGRADED_GRACE. Suspended exits before reaching
+  # the Degraded block, so no reset is needed there.
+  if [ "$HEALTH" == "Healthy" ]; then
+    DEGRADED_SINCE=-1
+  fi
 
   STATUS_LINE="  [${ELAPSED}s] Health: ${HEALTH}, Sync: ${SYNC}, Tag: ${CURRENT_TAG}"
 
@@ -166,6 +194,18 @@ while true; do
   fi
 
   if [ "$HEALTH" == "Degraded" ] || [ "$HEALTH" == "Missing" ]; then
+    # Tolerate transient Degraded/Missing during a rollout: start (or continue)
+    # the streak and keep polling until it has persisted for DEGRADED_GRACE.
+    if [ "$DEGRADED_SINCE" -lt 0 ]; then
+      DEGRADED_SINCE=$ELAPSED
+    fi
+    DEGRADED_FOR=$((ELAPSED - DEGRADED_SINCE))
+    if [ $DEGRADED_FOR -lt $DEGRADED_GRACE ]; then
+      echo "  ⏳ $HEALTH for ${DEGRADED_FOR}s (tolerating up to ${DEGRADED_GRACE}s) — deployment may still be initialising (new ReplicaSet starting, or Application not yet created)..."
+      sleep $POLL_INTERVAL
+      continue
+    fi
+
     echo ""
     echo "╔══════════════════════════════════════════════════════"
     echo "║ ❌ DEPLOYMENT UNHEALTHY — $HEALTH"
