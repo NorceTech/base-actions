@@ -34,6 +34,17 @@ inputs:
   api_key:
     description: 'Base Platform API key (identifies partner)'
     required: true
+  wait_timeout:
+    description: >
+      Seconds to wait for a canary promotion to complete. Canary preview
+      environments: the platform promotes by a Git commit (API 200 with the commit
+      and the promoted tag) and this action polls the deploy status until the
+      environment is Healthy on that tag. Legacy in-Rollout canaries: the platform
+      strips the <env>-preview overrides and re-rolls the canary first, answers 202
+      while that converges, and this action polls until the rollout is Healthy.
+      Cross-environment promotions return immediately.
+    required: false
+    default: '900'
 
 outputs:
   success:
@@ -69,4 +80,5 @@ runs:
         ENVIRONMENT: ${{ inputs.environment }}
         FROM_ENV: ${{ inputs.from_environment }}
         TO_ENV: ${{ inputs.to_environment }}
+        TIMEOUT: ${{ inputs.wait_timeout }}
       run: bash ${{ github.action_path }}/promote.sh

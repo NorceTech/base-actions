@@ -1,9 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Verify a YAML parser exists before reading .base/config.yaml.
+#
+# Unlike deploy.sh and sync-secrets.sh — which died outright — the fallback
+# below is guarded with `|| echo "{}"`. That makes this failure quieter and
+# worse: with neither yq nor PyYAML the PR ephemeral is created with an EMPTY
+# config, so every env var, replica count and resource limit from
+# .base/config.yaml is silently dropped and the run still reports success.
+# Refuse to build a PR environment we cannot configure correctly.
+require_yaml_parser() {
+  local what="$1"
+  if command -v yq &> /dev/null; then
+    return 0
+  fi
+  if command -v python3 &> /dev/null && python3 -c "import yaml" 2>/dev/null; then
+    return 0
+  fi
+  # Report the version only when python3 actually exists, otherwise the probe
+  # itself prints "command not found" above the box.
+  local pyyaml="MISSING"
+  if command -v python3 &> /dev/null; then
+    pyyaml=$(python3 -c 'import yaml; print(yaml.__version__)' 2>/dev/null || echo "MISSING")
+  fi
+  # The box prints this runner's arch, so the install line has to match it —
+  # handing an arm64 runner an amd64 URL makes the "Fix" actively wrong.
+  local yq_arch
+  case "$(uname -m)" in
+    x86_64) yq_arch=amd64 ;;
+    aarch64|arm64) yq_arch=arm64 ;;
+    *) yq_arch="<your-arch>" ;;
+  esac
+  echo ""
+  echo "::error::No YAML parser on this runner — cannot read ${what}"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ NO YAML PARSER AVAILABLE"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ Reading ${what} needs one of:"
+  echo "║   • yq            (preferred)"
+  echo "║   • python3 + PyYAML"
+  echo "║"
+  echo "║ On this runner:"
+  echo "║   yq        $(command -v yq || echo 'MISSING')"
+  echo "║   python3   $(command -v python3 || echo 'MISSING')"
+  echo "║   PyYAML    ${pyyaml}"
+  echo "║   arch      $(uname -m)"
+  echo "║"
+  echo "║ Stopping rather than creating a PR environment with an"
+  echo "║ empty config — every env var and limit in the file"
+  echo "║ would be silently dropped."
+  echo "║"
+  echo "║ 📋 Fix: install yq on the runner image, or add a step"
+  echo "║    before this action:"
+  echo "║"
+  echo "║      - name: Ensure yq is available"
+  echo "║        run: |"
+  echo "║          command -v yq >/dev/null && exit 0"
+  echo "║          mkdir -p \"\$RUNNER_TEMP/bin\""
+  echo "║          curl -fsSL -o \"\$RUNNER_TEMP/bin/yq\" \\"
+  echo "║            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${yq_arch}"
+  echo "║          chmod +x \"\$RUNNER_TEMP/bin/yq\""
+  echo "║          echo \"\$RUNNER_TEMP/bin\" >> \"\$GITHUB_PATH\""
+  echo "║"
+  echo "║ That snippet is a stopgap — it runs an unpinned binary"
+  echo "║ fetched at job time. For anything permanent, pin the"
+  echo "║ release tag and check it against the SHA-256 column of"
+  echo "║ that release's 'checksums' asset before chmod +x."
+  echo "║"
+  echo "║ GitHub-hosted runners ship yq preinstalled. Self-hosted"
+  echo "║ runners often do not — that is the usual cause here."
+  echo "╚══════════════════════════════════════════════════════"
+  exit 1
+}
+
 # Manage PR ephemeral environments (pr-*).
 # Config resolution (three-layer): global → inherited env → pr scope overrides
 if [ "$ACTION" != "delete" ] && [ -f "$CONFIG_FILE" ]; then
+  require_yaml_parser "$CONFIG_FILE"
   if command -v yq &> /dev/null; then
     GLOBAL_ENV=$(yq -o=json -I=0 '.environments.global.env // []' "$CONFIG_FILE")
     PR_CONFIG=$(yq -o=json -I=0 '.environments.pr // {}' "$CONFIG_FILE")
@@ -91,10 +166,14 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" -ne 200 ]; then
-  if [ "$ACTION" = "delete" ]; then
-    echo "::warning::Preview may already be deleted"
+  if [ "$ACTION" = "delete" ] && [ "$HTTP_CODE" -eq 404 ]; then
+    # Only "not found" is benign on delete: the environment was already removed.
+    # Any other failure (502/504 from GitHub while committing the deletion, 5xx
+    # from the API) used to be mapped to success here — which is how 140 stale
+    # PR environments accumulated on partnersense without a single red job.
+    echo "::warning::Preview environment not found — already deleted"
     echo "success=true" >> $GITHUB_OUTPUT
-    echo "message=Preview environment deleted or not found" >> $GITHUB_OUTPUT
+    echo "message=Preview environment not found (already deleted)" >> $GITHUB_OUTPUT
     exit 0
   else
     echo "::error::Failed to $ACTION preview"

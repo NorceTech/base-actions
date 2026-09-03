@@ -1,6 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Which release of this action is actually executing.
+#
+# Partners pin the moving `v1` tag — that is deliberate, we cannot ask them to bump a
+# pin on every minor. The cost is that a runner which caches
+# `_work/_actions/<owner>/<repo>/v1` can keep serving an old release long after `v1`
+# has moved. On 2026-08-21 a partner ran v1.0.x code while `v1` had pointed at v1.1.1
+# for 16 days, and it took timing forensics against a mock API to establish that.
+# Printing the version makes that a one-line read in the job log instead.
+#
+# VERSION is written into the published tree by the release workflow, so an
+# unreleased/internal checkout correctly reports "dev".
+action_version() {
+  local vf="${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../VERSION"
+  if [ -f "$vf" ]; then
+    cat "$vf"
+  else
+    echo "dev"
+  fi
+}
+
+echo "base-actions $(action_version) (ref: ${GITHUB_ACTION_REF:-unknown})"
+
 # Validate environment name
 ALLOWED_ENVS="dev test stage prod"
 validate_env() {
@@ -37,6 +59,81 @@ validate_env() {
 
 validate_env "$ENVIRONMENT" "environment"
 
+# Verify a YAML parser exists before any .base/*.yaml is read.
+#
+# Every YAML read below is `yq` with a `python3 -c "import yaml"` fallback.
+# Three of those fallbacks used to discard stderr and carry no `|| ...` guard,
+# so on a runner with neither yq nor PyYAML `set -e` killed the script the
+# moment one ran: exit 1, no stdout, no stderr, no annotation. Deploys failed
+# that way on self-hosted runners from 2026-07-09 with a completely empty step
+# log. Those call sites are guarded now; this preflight is what turns the
+# remaining "no parser at all" case into a message instead of an exit code.
+#
+# The guard belongs here rather than on each call site: a missing parser is a
+# runner problem, and it should be reported once, up front, in the operator's
+# terms — not as an opaque exit code from whichever read happened to be first.
+require_yaml_parser() {
+  local what="$1"
+  if command -v yq &> /dev/null; then
+    return 0
+  fi
+  if command -v python3 &> /dev/null && python3 -c "import yaml" 2>/dev/null; then
+    return 0
+  fi
+  # Report the version only when python3 actually exists, otherwise the probe
+  # itself prints "command not found" above the box.
+  local pyyaml="MISSING"
+  if command -v python3 &> /dev/null; then
+    pyyaml=$(python3 -c 'import yaml; print(yaml.__version__)' 2>/dev/null || echo "MISSING")
+  fi
+  # The box prints this runner's arch, so the install line has to match it —
+  # handing an arm64 runner an amd64 URL makes the "Fix" actively wrong.
+  local yq_arch
+  case "$(uname -m)" in
+    x86_64) yq_arch=amd64 ;;
+    aarch64|arm64) yq_arch=arm64 ;;
+    *) yq_arch="<your-arch>" ;;
+  esac
+  echo ""
+  echo "::error::No YAML parser on this runner — cannot read ${what}"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ NO YAML PARSER AVAILABLE"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ Reading ${what} needs one of:"
+  echo "║   • yq            (preferred)"
+  echo "║   • python3 + PyYAML"
+  echo "║"
+  echo "║ On this runner:"
+  echo "║   yq        $(command -v yq || echo 'MISSING')"
+  echo "║   python3   $(command -v python3 || echo 'MISSING')"
+  echo "║   PyYAML    ${pyyaml}"
+  echo "║   arch      $(uname -m)"
+  echo "║"
+  echo "║ 📋 Fix: install yq on the runner image, or add a step"
+  echo "║    before this action:"
+  echo "║"
+  echo "║      - name: Ensure yq is available"
+  echo "║        run: |"
+  echo "║          command -v yq >/dev/null && exit 0"
+  echo "║          mkdir -p \"\$RUNNER_TEMP/bin\""
+  echo "║          curl -fsSL -o \"\$RUNNER_TEMP/bin/yq\" \\"
+  echo "║            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${yq_arch}"
+  echo "║          chmod +x \"\$RUNNER_TEMP/bin/yq\""
+  echo "║          echo \"\$RUNNER_TEMP/bin\" >> \"\$GITHUB_PATH\""
+  echo "║"
+  echo "║ That snippet is a stopgap — it runs an unpinned binary"
+  echo "║ fetched at job time. For anything permanent, pin the"
+  echo "║ release tag and check it against the SHA-256 column of"
+  echo "║ that release's 'checksums' asset before chmod +x."
+  echo "║"
+  echo "║ GitHub-hosted runners ship yq preinstalled. Self-hosted"
+  echo "║ runners often do not — that is the usual cause here."
+  echo "╚══════════════════════════════════════════════════════"
+  exit 1
+}
+
 # Runtime profile knobs (set by action.yml; defaults match public behavior).
 # ENABLE_HEALTH_PROBE: when 'true', run a 5s GET /health pre-flight before the
 # deploy POST to surface DNS/proxy/connectivity errors with an actionable hint.
@@ -45,6 +142,51 @@ validate_env "$ENVIRONMENT" "environment"
 # because the internal API is only reachable through the corporate proxy.
 ENABLE_HEALTH_PROBE="${ENABLE_HEALTH_PROBE:-false}"
 USE_NOPROXY="${USE_NOPROXY:-true}"
+
+# A YAML read only happens when one of these files is present, so the parser
+# check is conditional too — an app with no .base/ directory still deploys on a
+# runner without yq.
+#
+# redirects_file may legitimately point at a .csv (action.yml allows it), and
+# CSV parsing needs python3 but NOT yq or PyYAML. Demanding a YAML parser for a
+# CSV-only app would block a deploy that would otherwise work, so the redirects
+# path only counts when it is actually YAML. The CSV branches check python3 at
+# their own call site instead.
+NEEDS_YAML_PARSER=false
+if [ -f "$CONFIG_FILE" ] || [ -f "${NGINX_CONFIG_FILE:-}" ]; then
+  NEEDS_YAML_PARSER=true
+fi
+case "${REDIRECTS_FILE:-.base/redirects.yaml}" in
+  *.csv) ;;
+  *)
+    if [ -f "${REDIRECTS_FILE:-.base/redirects.yaml}" ]; then
+      NEEDS_YAML_PARSER=true
+    fi
+    ;;
+esac
+if [ "$NEEDS_YAML_PARSER" = "true" ]; then
+  require_yaml_parser "your .base/*.yaml config"
+fi
+
+# CSV redirects need python3 (stdlib csv only). Same reasoning as the YAML
+# preflight: without this the unguarded parser below dies silently.
+require_python3() {
+  if command -v python3 &> /dev/null; then
+    return 0
+  fi
+  echo ""
+  echo "::error::python3 is required to parse $1 but is not installed on this runner"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ python3 NOT AVAILABLE"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ Parsing $1 needs python3 (standard library only)."
+  echo "║ Install it on the runner image, or switch to the YAML"
+  echo "║ redirects format and install yq instead."
+  echo "╚══════════════════════════════════════════════════════"
+  exit 1
+}
 
 # Read environment config from YAML
 CONFIG="{}"
@@ -131,6 +273,22 @@ with open(os.environ['CONFIG_FILE']) as f:
   fi
 fi
 
+# Attach source metadata (repo, ref, run, actor) from GitHub's standard
+# runner environment to a /api/v1/deploy payload. Skips what is not set.
+add_source_metadata() {
+  local body="$1"
+  local server="${GITHUB_SERVER_URL:-https://github.com}"
+  if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    body=$(echo "$body" | jq --arg v "${server}/${GITHUB_REPOSITORY}" '. + {repo_url: $v}')
+    if [ -n "${GITHUB_RUN_ID:-}" ]; then
+      body=$(echo "$body" | jq --arg v "${server}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" '. + {workflow_run_url: $v}')
+    fi
+  fi
+  [ -n "${GITHUB_REF_NAME:-}" ] && body=$(echo "$body" | jq --arg v "$GITHUB_REF_NAME" '. + {source_ref: $v}')
+  [ -n "${GITHUB_ACTOR:-}" ] && body=$(echo "$body" | jq --arg v "$GITHUB_ACTOR" '. + {triggered_by: $v}')
+  echo "$body"
+}
+
 BODY=$(jq -n \
   --arg action "deploy" \
   --arg customer "$APP" \
@@ -144,6 +302,11 @@ BODY=$(jq -n \
     image_tag: $image_tag,
     commit_sha: $commit_sha
   }')
+
+# Where this deploy came from, so the portal can link the partner's own
+# commit and workflow run and name the person who triggered it — all from
+# the runner's standard environment, nothing to configure.
+BODY=$(add_source_metadata "$BODY")
 
 # Add image field if specified (overrides app name as ACR repository)
 if [ -n "${IMAGE:-}" ]; then
@@ -193,8 +356,11 @@ with open(os.environ['NGINX_CONFIG_FILE']) as f:
 fi
 
 # Read redirects file (.yaml or .csv) for bulk URL redirects.
-# Supports up to 200,000 redirects per deployment. Backend auto-chunks across
-# multiple SnippetsFilters to stay under Kubernetes etcd object size limit.
+# Backend auto-chunks across multiple SnippetsFilters to stay under the
+# Kubernetes etcd object size limit. The ceiling is 16 chunks per app (Gateway
+# API caps a route at 16 filters), i.e. ~120k redirects with typical URLs and
+# 160k with short paths. Over the ceiling the backend rejects the deploy with
+# an explicit error rather than shipping a partial list — see docs/nginx.md.
 # Parse redirects to a TEMP FILE (never a shell variable — 100k+ entries = 10MB+).
 #
 # REDIRECTS_FILE_FOUND is set true when the file exists. We forward the
@@ -205,6 +371,28 @@ fi
 # that prunes stale chunks and drops HTTPRoute filter refs; without this
 # signal, the backend would fall into its "don't touch" path and stale
 # chunks from previous deploys would leak forever.
+# A redirects file that fails to parse must stop the deploy, never quietly
+# resolve to zero redirects. REDIRECTS_FILE_FOUND=true with an empty list is a
+# meaningful signal further down — it tells the backend to prune every existing
+# chunk — so swallowing a parse error here would silently delete a partner's
+# live redirects and still report the deploy as successful.
+fail_redirects() {
+  echo ""
+  echo "::error file=$1::Could not parse redirects file: $1"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ COULD NOT PARSE $1"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ The parser error is printed directly above this box."
+  echo "║"
+  echo "║ Deploy stopped. Treating an unreadable redirects file"
+  echo "║ as 'no redirects' would drop every live redirect for"
+  echo "║ this environment on the next reconcile."
+  echo "╚══════════════════════════════════════════════════════"
+  exit 1
+}
+
 REDIRECTS_INPUT="${REDIRECTS_FILE:-.base/redirects.yaml}"
 REDIRECTS_TMP=$(mktemp)
 echo "[]" > "$REDIRECTS_TMP"
@@ -213,6 +401,7 @@ REDIRECTS_FILE_FOUND=false
 if [ -f "$REDIRECTS_INPUT" ]; then
   REDIRECTS_FILE_FOUND=true
   if [[ "$REDIRECTS_INPUT" == *.csv ]]; then
+    require_python3 "$REDIRECTS_INPUT"
     REDIRECTS_CSV="$REDIRECTS_INPUT" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import csv, json, os
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
@@ -225,10 +414,10 @@ with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
         redirects.append({'from': fr, 'to': to, 'status': int(row.get('status', 301) or 301)})
 with open(os.environ['REDIRECTS_TMP'], 'w') as out:
     json.dump(redirects, out, separators=(',',':'))
-" 2>/dev/null
+" || fail_redirects "$REDIRECTS_INPUT"
   else
     if command -v yq &> /dev/null; then
-      yq -o=json -I=0 '.redirects // []' "$REDIRECTS_INPUT" > "$REDIRECTS_TMP" 2>/dev/null || echo "[]" > "$REDIRECTS_TMP"
+      yq -o=json -I=0 '.redirects // []' "$REDIRECTS_INPUT" > "$REDIRECTS_TMP" || fail_redirects "$REDIRECTS_INPUT"
     else
       REDIRECTS_YAML="$REDIRECTS_INPUT" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import yaml, json, os
@@ -236,11 +425,12 @@ with open(os.environ['REDIRECTS_YAML']) as f:
     data = yaml.safe_load(f) or {}
 with open(os.environ['REDIRECTS_TMP'], 'w') as out:
     json.dump(data.get('redirects', []), out, separators=(',',':'))
-" 2>/dev/null
+" || fail_redirects "$REDIRECTS_INPUT"
     fi
   fi
 elif [ -f "${REDIRECTS_INPUT%.yaml}.csv" ]; then
   REDIRECTS_FILE_FOUND=true
+  require_python3 "${REDIRECTS_INPUT%.yaml}.csv"
   REDIRECTS_CSV="${REDIRECTS_INPUT%.yaml}.csv" REDIRECTS_TMP="$REDIRECTS_TMP" python3 -c "
 import csv, json, os
 with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
@@ -253,7 +443,7 @@ with open(os.environ['REDIRECTS_CSV'], 'r', encoding='utf-8-sig') as f:
         redirects.append({'from': fr, 'to': to, 'status': int(row.get('status', 301) or 301)})
 with open(os.environ['REDIRECTS_TMP'], 'w') as out:
     json.dump(redirects, out, separators=(',',':'))
-" 2>/dev/null
+" || fail_redirects "${REDIRECTS_INPUT%.yaml}.csv"
 fi
 
 # Build the final request body as a FILE (all large data stays on disk, never in shell vars).
@@ -297,6 +487,34 @@ if [ "$VPN_ONLY" = "true" ]; then
   jq '. + {vpn_only: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 elif [ "$VPN_ONLY" = "false" ]; then
   jq '. + {vpn_only: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
+fi
+
+# Forward force_https the same way, and for the same reason: forwarding only
+# `true` would make `force_https: false` a silent no-op, so an environment
+# switched on in the portal could never be switched off from config.yaml.
+FORCE_HTTPS=$(echo "$CONFIG" | jq -r '.force_https // empty' 2>/dev/null || echo "")
+if [ -n "${FORCE_HTTPS_INPUT:-}" ]; then
+  # Workflow input wins over config.yaml, so a pipeline can override per run.
+  # Validated like auto_promote above: without this, `force_https: yes` would
+  # fall through to config.yaml or the portal setting, and the input would look
+  # like it was ignored for no reason — the same silent no-op this whole block
+  # exists to avoid.
+  if [ "$FORCE_HTTPS_INPUT" != "true" ] && [ "$FORCE_HTTPS_INPUT" != "false" ]; then
+    echo "::error::force_https must be 'true' or 'false', got: '${FORCE_HTTPS_INPUT}'. Set force_https to true or false in your workflow."
+    exit 1
+  fi
+  FORCE_HTTPS="$FORCE_HTTPS_INPUT"
+elif [ -n "$FORCE_HTTPS" ] && [ "$FORCE_HTTPS" != "true" ] && [ "$FORCE_HTTPS" != "false" ]; then
+  # A warning, not an error: config.yaml is already in use by partners and a
+  # deploy must not start failing on a value that was previously ignored. But
+  # ignoring it in silence is what makes this hard to debug.
+  echo "::warning::force_https in .base/config.yaml must be true or false, got: '${FORCE_HTTPS}'. Ignoring it and keeping the current portal setting."
+  FORCE_HTTPS=""
+fi
+if [ "$FORCE_HTTPS" = "true" ]; then
+  jq '. + {force_https: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
+elif [ "$FORCE_HTTPS" = "false" ]; then
+  jq '. + {force_https: false}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 fi
 
 # Pre-flight: verify API is reachable (surfaces DNS/proxy/connectivity errors early)
@@ -457,6 +675,10 @@ NAMESPACE=$(echo "$BODY" | jq -r '.data.namespace // empty')
 GIT_SHA=$(echo "$BODY" | jq -r '.data.gitCommitSha // empty')
 PREV_TAG=$(echo "$BODY" | jq -r '.data.previousImageTag // empty')
 MESSAGE=$(echo "$BODY" | jq -r '.data.message // empty')
+# Staged (auto_promote=false) deploys: the platform tells us where the canary
+# preview is served. Older platform versions omit it — wait-healthy.sh then
+# derives the same URL from the namespace.
+PREVIEW_URL=$(echo "$BODY" | jq -r '.data.previewUrl // empty')
 
 echo "success=$SUCCESS" >> $GITHUB_OUTPUT
 echo "deploy_success=$SUCCESS" >> $GITHUB_OUTPUT
@@ -464,6 +686,7 @@ echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
 echo "git_commit_sha=$GIT_SHA" >> $GITHUB_OUTPUT
 echo "previous_image_tag=$PREV_TAG" >> $GITHUB_OUTPUT
 echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
 
 echo "✅ Deploy submitted: ${IMAGE_TAG} → ${ENVIRONMENT}"
 if [ -n "$PREV_TAG" ]; then

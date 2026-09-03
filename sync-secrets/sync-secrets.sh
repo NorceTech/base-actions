@@ -11,6 +11,81 @@ fi
 
 echo "Reading secrets mapping from: $SECRETS_FILE"
 
+# Verify a YAML parser exists before reading the mapping.
+#
+# The python fallback below used to discard stderr and carry no `|| ...` guard,
+# so on a runner with neither yq nor PyYAML `set -e` killed this script right
+# here: exit 1 immediately after the line above, with no error of any kind.
+# Every self-hosted run from 2026-07-09 onward failed that way — twelve in a
+# row, each one a two-line log ending in a bare exit code. The redirection is
+# gone now; this preflight is what keeps the failure legible.
+require_yaml_parser() {
+  local what="$1"
+  if command -v yq &> /dev/null; then
+    return 0
+  fi
+  if command -v python3 &> /dev/null && python3 -c "import yaml" 2>/dev/null; then
+    return 0
+  fi
+  # Report the version only when python3 actually exists, otherwise the probe
+  # itself prints "command not found" above the box.
+  local pyyaml="MISSING"
+  if command -v python3 &> /dev/null; then
+    pyyaml=$(python3 -c 'import yaml; print(yaml.__version__)' 2>/dev/null || echo "MISSING")
+  fi
+  # The box prints this runner's arch, so the install line has to match it —
+  # handing an arm64 runner an amd64 URL makes the "Fix" actively wrong.
+  local yq_arch
+  case "$(uname -m)" in
+    x86_64) yq_arch=amd64 ;;
+    aarch64|arm64) yq_arch=arm64 ;;
+    *) yq_arch="<your-arch>" ;;
+  esac
+  echo ""
+  echo "::error::No YAML parser on this runner — cannot read ${what}"
+  echo ""
+  echo "╔══════════════════════════════════════════════════════"
+  echo "║ ❌ NO YAML PARSER AVAILABLE"
+  echo "╠══════════════════════════════════════════════════════"
+  echo "║"
+  echo "║ Reading ${what} needs one of:"
+  echo "║   • yq            (preferred)"
+  echo "║   • python3 + PyYAML"
+  echo "║"
+  echo "║ On this runner:"
+  echo "║   yq        $(command -v yq || echo 'MISSING')"
+  echo "║   python3   $(command -v python3 || echo 'MISSING')"
+  echo "║   PyYAML    ${pyyaml}"
+  echo "║   arch      $(uname -m)"
+  echo "║"
+  echo "║ 📋 Fix: install yq on the runner image, or add a step"
+  echo "║    before this action:"
+  echo "║"
+  echo "║      - name: Ensure yq is available"
+  echo "║        run: |"
+  echo "║          command -v yq >/dev/null && exit 0"
+  echo "║          mkdir -p \"\$RUNNER_TEMP/bin\""
+  echo "║          curl -fsSL -o \"\$RUNNER_TEMP/bin/yq\" \\"
+  echo "║            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${yq_arch}"
+  echo "║          chmod +x \"\$RUNNER_TEMP/bin/yq\""
+  echo "║          echo \"\$RUNNER_TEMP/bin\" >> \"\$GITHUB_PATH\""
+  echo "║"
+  echo "║ That snippet is a stopgap — it runs an unpinned binary"
+  echo "║ fetched at job time. For anything permanent, pin the"
+  echo "║ release tag and check it against the SHA-256 column of"
+  echo "║ that release's 'checksums' asset before chmod +x."
+  echo "║"
+  echo "║ GitHub-hosted runners ship yq preinstalled. Self-hosted"
+  echo "║ runners often do not — that is the usual cause here."
+  echo "╚══════════════════════════════════════════════════════"
+  echo "synced_count=0" >> "$GITHUB_OUTPUT"
+  echo "failed_count=0" >> "$GITHUB_OUTPUT"
+  echo "synced_names=" >> "$GITHUB_OUTPUT"
+  exit 1
+}
+
+require_yaml_parser "$SECRETS_FILE"
+
 if command -v yq &> /dev/null; then
   FILE_JSON=$(yq -o=json '.' "$SECRETS_FILE")
 else
@@ -19,7 +94,7 @@ import yaml, json, os
 with open(os.environ['SECRETS_FILE']) as f:
     data = yaml.safe_load(f)
     print(json.dumps(data, separators=(',', ':')))
-" 2>/dev/null)
+")
 fi
 
 HAS_ENVIRONMENTS=$(echo "$FILE_JSON" | jq 'has("environments")')

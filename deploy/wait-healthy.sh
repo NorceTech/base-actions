@@ -1,39 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Which release of this action is actually executing.
+#
+# Partners pin the moving `v1` tag — that is deliberate, we cannot ask them to bump a
+# pin on every minor. The cost is that a runner which caches
+# `_work/_actions/<owner>/<repo>/v1` can keep serving an old release long after `v1`
+# has moved. On 2026-08-21 a partner ran v1.0.x code while `v1` had pointed at v1.1.1
+# for 16 days, and it took timing forensics against a mock API to establish that.
+# Printing the version makes that a one-line read in the job log instead.
+#
+# VERSION is written into the published tree by the release workflow, so an
+# unreleased/internal checkout correctly reports "dev".
+action_version() {
+  local vf="${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../VERSION"
+  if [ -f "$vf" ]; then
+    cat "$vf"
+  else
+    echo "dev"
+  fi
+}
+
 echo "::group::⏳ Waiting for deployment to become healthy (timeout: ${TIMEOUT}s)"
 
 START_TIME=$(date +%s)
-POLL_INTERVAL=10
-SYNC_GRACE=30
-# TAG_GRACE covers the window between the deploy API returning OK (git commit
-# written) and ArgoCD reconciling the new tag into the partner cluster. During
-# this window the Base API reports the PREVIOUS deploy's status — if that was
-# Degraded/Missing (e.g. the very first deploy to a new env had a placeholder
-# :unknown tag), the old logic would exit 1 at t=0s before ArgoCD even started
-# syncing our change. We wait up to TAG_GRACE seconds for `CURRENT_TAG ==
-# IMAGE_TAG` before treating any Degraded/Missing state as authoritative.
-TAG_GRACE=60
+POLL_INTERVAL=${POLL_INTERVAL:-10}
+SYNC_GRACE=${SYNC_GRACE:-30}
 LAST_STATUS=""
 UNKNOWN_WARNED=false
 TAG_WAIT_WARNED=false
-# DEGRADED_GRACE complements TAG_GRACE. TAG_GRACE only protects the window while
-# the reported tag is still the PREVIOUS deploy's. But for staged/canary apps the
-# status endpoint reports the STABLE ReplicaSet's tag, which never matches
-# IMAGE_TAG until promote — so TAG_GRACE expires and the new canary is left
-# unprotected while it starts up (image pull, slow boot, probes not yet green)
-# and briefly reports Degraded before it reaches its first pause step (canary)
-# or passes readiness probes (direct deploy).
-# Require Degraded/Missing to PERSIST for DEGRADED_GRACE before failing; the
-# streak resets only on Healthy or Suspended — not on Progressing, which is just
-# a pod restarting and not a genuine recovery. A genuine crash-loop stays
-# Degraded (or Degraded/Progressing/Degraded) past the window and still fails.
-# NOTE: TAG_GRACE and DEGRADED_GRACE are additive — worst-case wait before a
-# Degraded verdict is TAG_GRACE + DEGRADED_GRACE. Keep TIMEOUT above their sum.
+# There is deliberately no TAG_GRACE any more.
+#
+# The status endpoint reports the health of whatever is LIVE. While our tag is not
+# live, that verdict describes the PREVIOUS release, not this deploy — so no amount
+# of elapsed time makes it "genuinely ours", which is what the old TAG_GRACE=60
+# assumed. Base aborts a paused canary *before* writing our commit, so this window
+# is Degraded by construction, and ArgoCD reconcile latency on the shared controller
+# measured 6m23s–11m23s in 5 of 8 partnersense prod deploys (2026-08-19..21).
+# A 60s grace turned "ArgoCD is busy" into "your deploy is broken".
+#
+# We now keep waiting while our tag is not live; TIMEOUT is the only backstop. A
+# genuinely broken release still fails fast, because once our tag IS live a
+# crash-loop trips DEGRADED_GRACE below within a minute.
+#
+# DEGRADED_GRACE tolerates a transient Degraded *after* our tag is live — a new
+# ReplicaSet starting up, image pull, probes not yet green. The streak resets only on
+# Healthy, not on Progressing, so an oscillating crash-loop still accumulates.
 DEGRADED_GRACE=${DEGRADED_GRACE:-60}
 DEGRADED_SINCE=-1   # ELAPSED at which the current Degraded streak began (-1 = none)
 
-MIN_USEFUL_TIMEOUT=$((TAG_GRACE + DEGRADED_GRACE + SYNC_GRACE + 30))
+MIN_USEFUL_TIMEOUT=$((DEGRADED_GRACE + SYNC_GRACE + 30))
 if [ "$TIMEOUT" -lt "$MIN_USEFUL_TIMEOUT" ]; then
   echo "::warning::TIMEOUT=${TIMEOUT}s is less than combined grace periods (${MIN_USEFUL_TIMEOUT}s) — a degraded deployment may always timeout rather than fail fast. Consider increasing wait_timeout."
 fi
@@ -50,6 +66,7 @@ while true; do
     echo "║ The deployment was submitted to Git successfully,"
     echo "║ but the pods did not become healthy in time."
     echo "║"
+    echo "║ Action version: $(action_version)"
     echo "║ Last status: Health=${LAST_HEALTH:-Unknown}, Sync=${LAST_SYNC:-Unknown}"
     echo "║ Expected tag: $IMAGE_TAG"
     echo "║ Current tag:  ${LAST_TAG:-unknown}"
@@ -63,6 +80,10 @@ while true; do
     if [ "${LAST_TAG:-unknown}" != "$IMAGE_TAG" ] && [ "${LAST_TAG:-unknown}" != "unknown" ]; then
     echo "║   • ArgoCD never reconciled ${IMAGE_TAG} — cluster still on ${LAST_TAG}"
     echo "║     (check ArgoCD for the Application, or retry)"
+    fi
+    if [ "${LAST_TAG:-unknown}" == "unknown" ]; then
+    echo "║   • No image is live for this app/environment — check that"
+    echo "║     app and environment are spelled the way Base knows them"
     fi
     echo "║   • Image pull error (wrong tag or ACR permissions)"
     echo "║   • Application crash loop (check pod logs)"
@@ -95,6 +116,25 @@ while true; do
   SYNC=$(echo "$BODY" | jq -r '.data.syncStatus // "Unknown"')
   CURRENT_TAG=$(echo "$BODY" | jq -r '.data.imageTag // "unknown"')
 
+  # `imageTags` is EVERY tag currently live for this Application — during a rollout
+  # that is both the old and the new ReplicaSet. Ask the question we actually care
+  # about ("is MY tag live?") by membership, rather than equality against the single
+  # `imageTag` field, which falls back to an arbitrary live tag when Base's record
+  # and the cluster disagree. Older API versions omit the array — fall back to
+  # equality there so this action keeps working against them.
+  LIVE_TAGS=$(echo "$BODY" | jq -r '.data.imageTags // [] | .[]' 2>/dev/null || true)
+  if [ -n "$LIVE_TAGS" ]; then
+    if printf '%s\n' "$LIVE_TAGS" | grep -qxF -- "$IMAGE_TAG"; then
+      TAG_LIVE=true
+    else
+      TAG_LIVE=false
+    fi
+  elif [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
+    TAG_LIVE=true
+  else
+    TAG_LIVE=false
+  fi
+
   LAST_HEALTH="$HEALTH"
   LAST_SYNC="$SYNC"
   LAST_TAG="$CURRENT_TAG"
@@ -125,12 +165,32 @@ while true; do
       continue
     fi
 
-    # Derive preview URL from namespace: {partner}-{app}-{env}
-    # Preview URL: preview-{app}-{env}.{partner}.base.norce.tech
-    PREVIEW_URL=""
-    if [ -n "${NAMESPACE:-}" ]; then
-      PARTNER=$(echo "$NAMESPACE" | cut -d'-' -f1)
-      APP_ENV=$(echo "$NAMESPACE" | cut -d'-' -f2-)
+    # Suspended only means "a canary is paused" — not necessarily OURS. If Base's
+    # replace-on-deploy abort failed, the PREVIOUS release's canary is still paused
+    # and reporting Suspended. Exiting green there would tell the partner their
+    # release is staged when nothing of theirs reached the cluster. Keep waiting
+    # until our tag is actually live.
+    if [ "$TAG_LIVE" != "true" ]; then
+      if [ "$TAG_WAIT_WARNED" == "false" ]; then
+        TAG_WAIT_WARNED=true
+        echo "  ⏳ A canary is paused but it is not ${IMAGE_TAG} (live: ${CURRENT_TAG}) — waiting for this deploy to reach the cluster"
+      fi
+      sleep $POLL_INTERVAL
+      continue
+    fi
+
+    # The platform reports the preview URL on the deploy response; derive it
+    # from the namespace ({partner}-{app}-{env}) only for platform versions
+    # that do not. Both give preview-{app}-{env}.{partner}.base.norce.tech.
+    PREVIEW_URL="${DEPLOY_PREVIEW_URL:-}"
+    if [ -z "$PREVIEW_URL" ] && [ -n "${NAMESPACE:-}" ]; then
+      # The platform always reports the BASE environment's namespace here, even
+      # when the canary runs as its own "<namespace>-preview" environment; strip
+      # the suffix defensively so a preview namespace can never yield
+      # "preview-<app>-<env>-preview".
+      BASE_NAMESPACE="${NAMESPACE%-preview}"
+      PARTNER=$(echo "$BASE_NAMESPACE" | cut -d'-' -f1)
+      APP_ENV=$(echo "$BASE_NAMESPACE" | cut -d'-' -f2-)
       PREVIEW_URL="https://preview-${APP_ENV}.${PARTNER}.base.norce.tech"
     fi
 
@@ -148,7 +208,7 @@ while true; do
     exit 0
   fi
 
-  if [ "$HEALTH" == "Healthy" ] && [ "$CURRENT_TAG" == "$IMAGE_TAG" ]; then
+  if [ "$HEALTH" == "Healthy" ] && [ "$TAG_LIVE" == "true" ]; then
     if [ "$SYNC" == "Synced" ]; then
       echo "::endgroup::"
       echo "✅ Deployment healthy and synced! (${ELAPSED}s)"
@@ -180,14 +240,12 @@ while true; do
     echo "  ℹ️  Environment not found yet — platform is provisioning the new environment..."
   fi
 
-  # Stale-tag grace: the reported status is for the PREVIOUS deploy because
-  # ArgoCD hasn't reconciled the new Git commit onto the partner cluster yet.
-  # Skip fail-fast paths (Degraded/Missing) until either the tag matches or we
-  # exhaust TAG_GRACE — at which point the reported state is genuinely ours.
-  if [ "$CURRENT_TAG" != "$IMAGE_TAG" ] && [ $ELAPSED -lt $TAG_GRACE ]; then
+  # Our tag is not live yet, so everything reported above describes the release we
+  # are REPLACING. Never fail-fast on it — see the TAG_GRACE note at the top.
+  if [ "$TAG_LIVE" != "true" ]; then
     if [ "$TAG_WAIT_WARNED" == "false" ]; then
       TAG_WAIT_WARNED=true
-      echo "  ⏳ ArgoCD hasn't picked up ${IMAGE_TAG} yet (current: ${CURRENT_TAG}) — waiting up to ${TAG_GRACE}s before evaluating health"
+      echo "  ⏳ ArgoCD hasn't picked up ${IMAGE_TAG} yet (live: ${CURRENT_TAG}) — health above describes the previous release, not this deploy"
     fi
     sleep $POLL_INTERVAL
     continue

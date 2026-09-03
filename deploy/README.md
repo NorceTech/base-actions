@@ -67,7 +67,7 @@ jobs:
 
 ## Staged (Canary) Deployments
 
-Set `auto_promote: false` to deploy a canary version first. The canary lives on a preview URL until you promote it with the [`promote` action](../promote/README.md).
+Set `auto_promote: false` to deploy a canary version first. The canary lives on a preview URL (the action's `preview_url` output) until you promote it with the [`promote` action](../promote/README.md). Config and secrets scoped to `<env>-preview` apply to the canary only and never to the live version; promoting makes the canary's image the live version.
 
 ```yaml
 - uses: NorceTech/base-actions/deploy@v1
@@ -126,7 +126,7 @@ wait_for_healthy: 'false'
 Extend the timeout for slow-starting apps:
 
 ```yaml
-wait_timeout: '600'   # 10 minutes
+wait_timeout: '1200'  # 20 minutes
 ```
 
 ## Inputs
@@ -143,7 +143,7 @@ wait_timeout: '600'   # 10 minutes
 | `redirects_file` | No | `.base/redirects.yaml` | Path to bulk redirects file (`.yaml` or `.csv`). Falls back to `.csv` if `.yaml` is not present. See [proxy config & redirects](../docs/nginx.md). |
 | `api_url` | No | `https://base-api.norce.tech` | Platform API URL |
 | `wait_for_healthy` | No | `true` | Wait for the deploy to become healthy before exiting |
-| `wait_timeout` | No | `300` | Health-polling timeout (seconds) |
+| `wait_timeout` | No | `900` | Health-polling timeout (seconds). Must exceed ArgoCD's reconcile time — measured at 6–11 min on the shared controller. |
 | `auto_promote` | No | — | `false` → staged canary, `true` → instant rollout. Omit to use portal setting. |
 
 ## Outputs
@@ -176,13 +176,23 @@ In all cases `deploy_success=false` is written to `$GITHUB_OUTPUT` so downstream
 A self-contained test script covers the curl error-handling and happy-path scenarios:
 
 ```bash
-bash deploy/test-deploy-curl.sh
+bash deploy/test-deploy-curl.sh    # curl error handling in deploy.sh
+bash deploy/test-wait-healthy.sh   # health-polling verdicts in wait-healthy.sh
 ```
 
-The script requires `python3` (stdlib only) and validates:
+Both require `python3` (stdlib only). `test-deploy-curl.sh` validates:
 1. `|| CURL_EXIT=$?` captures exit codes 28/7/0 under `set -euo pipefail`
 2. Connection-refused run exits 1 with the friendly error box
 3. Mock-HTTP-200 run exits 0 with correct `GITHUB_OUTPUT` values
+
+`test-wait-healthy.sh` runs the action against a mock Base API and asserts the two
+verdicts this action must never get wrong:
+1. A slow ArgoCD reconcile is **not** reported as a failed deployment — while your tag
+   is not live, the reported health belongs to the release you are replacing
+2. A paused canary belonging to the **previous** release is not reported as your
+   staged release awaiting promotion
+
+A genuine crash-loop on your own tag still fails within `DEGRADED_GRACE` (60s).
 
 ## Related Docs
 

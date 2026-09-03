@@ -88,7 +88,7 @@ During a staged deploy on `prod`, the canary instances receive:
 environment=all   +   environment=prod   +   environment=prod-preview
 ```
 
-After promotion the preview scope is removed — live instances fall back to `environment=all` + `environment=prod`.
+Live instances only ever see `environment=all` + `environment=prod`; the `prod-preview` scope applies to the canary only. The preview scope stays configured in the vault and is applied again by the next staged deploy — remove the keys (`sync-secrets` with the entry deleted, or the portal Secrets tab) when you no longer want them.
 
 ---
 

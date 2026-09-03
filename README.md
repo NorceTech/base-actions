@@ -18,6 +18,40 @@ Official GitHub Actions for deploying apps to the **Norce Base Platform**.
 
 The API key identifies your partner — there's no need to pass the partner name in your workflows.
 
+### Runner requirements
+
+These actions parse your `.base/*.yaml` files with [`yq`](https://github.com/mikefarah/yq),
+falling back to `python3` + PyYAML. **GitHub-hosted runners ship `yq` preinstalled, so
+nothing is needed there.** On a self-hosted runner, make sure one of the two is present
+on the image, or install `yq` in a step before the action:
+
+```yaml
+- name: Ensure yq is available
+  run: |
+    set -euo pipefail
+    command -v yq >/dev/null && exit 0
+    # Pick the asset for THIS runner — an amd64 binary on an arm64 runner
+    # fails with a confusing "cannot execute binary file".
+    case "$(uname -m)" in
+      x86_64) YQ_ARCH=amd64 ;;
+      aarch64|arm64) YQ_ARCH=arm64 ;;
+      *) echo "unsupported arch $(uname -m)"; exit 1 ;;
+    esac
+    mkdir -p "$RUNNER_TEMP/bin"
+    curl -fsSL -o "$RUNNER_TEMP/bin/yq" \
+      "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${YQ_ARCH}"
+    chmod +x "$RUNNER_TEMP/bin/yq"
+    echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+```
+
+For anything beyond a stopgap, pin the release and verify it — this step puts an
+executable on `PATH` for every later step in the job. Pin `yq_linux_<arch>` to a
+tagged version and check it against the SHA-256 column of that release's
+`checksums` asset before `chmod +x`.
+
+If neither is available the action now stops with an explicit error naming what is
+missing. Before `v1.1.2` it exited 1 with an empty log.
+
 ## Minimal Deploy
 
 ```yaml

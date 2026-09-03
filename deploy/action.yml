@@ -28,7 +28,7 @@ inputs:
     required: false
     default: '.base/nginx.yaml'
   redirects_file:
-    description: 'Path to redirects file (.yaml or .csv) for bulk redirects. Supports up to 200,000 entries.'
+    description: 'Path to redirects file (.yaml or .csv) for bulk redirects. Handles six-figure lists; see docs/nginx.md for the exact ceiling.'
     required: false
     default: '.base/redirects.yaml'
   api_url:
@@ -43,13 +43,27 @@ inputs:
     required: false
     default: 'true'
   wait_timeout:
-    description: 'Timeout in seconds when waiting for healthy status'
+    description: >
+      Timeout in seconds when waiting for healthy status. Must exceed the time ArgoCD
+      needs to reconcile the new tag onto the partner cluster — measured at 6-11 minutes
+      on the shared controller, so 300s used to expire before the deploy had a chance.
     required: false
-    default: '300'
+    default: '900'
   auto_promote:
     description: >
       Deployment strategy. Set to "false" for staged deployment (canary + manual promotion).
       Set to "true" for auto-promote (instant rollout). Omit to use the current portal setting.
+    required: false
+  force_https:
+    description: >
+      Redirect plain HTTP to HTTPS for this environment. Must be "true" or
+      "false" when set; anything else fails the deploy rather than being ignored.
+      Precedence is: this input, then force_https in .base/config.yaml, then the
+      current portal setting. So omitting it does NOT mean "leave things alone"
+      if config.yaml sets force_https — that value still applies. Omit it here
+      and from config.yaml to keep whatever the portal already has.
+      Note: leave this off if the domain sits behind Cloudflare in "Flexible" SSL
+      mode — Cloudflare fetches the origin over HTTP, so the redirect would loop.
     required: false
 
 outputs:
@@ -76,7 +90,7 @@ outputs:
     value: ${{ steps.wait-healthy.outputs.sync_status }}
   preview_url:
     description: 'Preview URL when blue-green is enabled (Suspended state). Empty for standard deployments.'
-    value: ${{ steps.wait-healthy.outputs.preview_url }}
+    value: ${{ steps.wait-healthy.outputs.preview_url || steps.deploy.outputs.preview_url }}
 
 runs:
   using: 'composite'
@@ -97,6 +111,7 @@ runs:
         REDIRECTS_FILE: ${{ inputs.redirects_file }}
         REPO_NAME: ${{ github.event.repository.name }}
         AUTO_PROMOTE: ${{ inputs.auto_promote }}
+        FORCE_HTTPS_INPUT: ${{ inputs.force_https }}
       run: bash ${{ github.action_path }}/deploy.sh
 
     - name: Wait for healthy deployment
@@ -111,6 +126,7 @@ runs:
         IMAGE_TAG: ${{ inputs.image_tag }}
         TIMEOUT: ${{ inputs.wait_timeout }}
         NAMESPACE: ${{ steps.deploy.outputs.namespace }}
+        DEPLOY_PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
       run: bash ${{ github.action_path }}/wait-healthy.sh
 
     - name: Set final status

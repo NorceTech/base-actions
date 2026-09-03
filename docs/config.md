@@ -36,6 +36,7 @@ environments:
     healthCheckPath: /api/health
     startupGracePeriod: 90
     is_private: false                # default false — set true for internal-only (no public endpoint)
+    force_https: true                # default false — 301 plain HTTP to HTTPS
     resources:
       requests: { cpu: 500m,  memory: 1.5Gi }
       limits:   { cpu: 2000m, memory: 3Gi }
@@ -84,6 +85,7 @@ environments:
 | `healthCheckPath` | HTTP readiness probe path. Omit to use a TCP port check (safe for auth-protected apps). |
 | `startupGracePeriod` | Seconds to wait before failing the startup probe (default `300`, range `10–900`). Increase for slow-start apps. |
 | `is_private` | `true` hides the environment from the public internet — no public endpoint, no DNS. See [Internal-Only Deployments](#internal-only-deployments). |
+| `force_https` | `true` answers plain HTTP with a 301 to the HTTPS URL. Default `false`, which serves both. See [Forcing HTTPS](#forcing-https). |
 | `resources.requests` / `resources.limits` | CPU and memory reservations. |
 | `autoscaling` | Autoscaling rules — see [docs/scaling.md](scaling.md). |
 | `env` | List of `{ name, value }` environment variables. Values are always stringified — `value: 3000` and `value: '3000'` behave identically. |
@@ -141,3 +143,46 @@ When `is_private: true`:
 The toggle is also available in the portal (Environments → *Internal only*). Once set, it flows through promotions and rollbacks automatically.
 
 > ⚠️ Switching an existing public environment to `is_private: true` **removes** all public routing and DNS. Existing traffic will be dropped.
+
+
+## Forcing HTTPS
+
+By default an environment answers on both HTTP and HTTPS. A visitor who types the
+bare domain therefore stays on plain HTTP until your app redirects them — if it
+does at all.
+
+Set `force_https: true` to have the platform answer port 80 with a `301` to the
+same URL over HTTPS:
+
+```yaml
+environments:
+  prod:
+    force_https: true
+```
+
+It can also be set per run from the workflow, which overrides the config file:
+
+```yaml
+- uses: NorceTech/base-actions/deploy@v1
+  with:
+    force_https: 'true'
+```
+
+The order is: the workflow input first, then `force_https` in `.base/config.yaml`,
+then whatever is already set in the portal. Leaving the workflow input out does
+not mean "change nothing" — if config.yaml sets `force_https`, that value is
+still sent. To keep the portal's current setting, leave it out of both.
+
+Either place must be `true` or `false`. An unrecognised workflow input fails the
+deploy rather than being ignored; an unrecognised value in config.yaml is
+skipped with a warning in the job log.
+
+Certificate renewals are unaffected: the ACME challenge is served on its own
+exact path, which takes precedence over the redirect.
+
+**Do not enable this if your domain sits behind Cloudflare in "Flexible" SSL
+mode.** In that mode Cloudflare fetches your origin over plain HTTP, so it would
+receive the redirect, send the visitor to HTTPS, fetch the origin over HTTP
+again, and loop. Cloudflare's "Full" and "Full (strict)" modes are unaffected —
+and `Full (strict)` is the correct setting, since the platform serves a valid
+certificate on the origin.

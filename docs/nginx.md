@@ -124,7 +124,7 @@ For security, these directives return a 400 error at deploy time:
 
 ## Bulk Redirects — `.base/redirects.yaml` / `.csv`
 
-For large redirect lists (migrations, SEO restructures, brand changes), use a dedicated file instead of raw proxy snippets. Supports up to **200,000 redirects per deployment**.
+For large redirect lists (migrations, SEO restructures, brand changes), use a dedicated file instead of raw proxy snippets. Handles lists in the six figures — see [Limits](#limits) for the exact ceiling and what happens when you reach it.
 
 ### YAML format (recommended for < 1,000 entries)
 
@@ -158,9 +158,27 @@ from,to,status
 
 ### Limits
 
-- Max **200,000 redirects** per deployment
+- Max **16 proxy-config chunks** per app. In practice that is roughly **120,000
+  redirects** with typical product URLs, and up to **160,000** if your paths are
+  short. The binding limit is URL length, not entry count — long URLs fill a chunk
+  before it reaches its entry cap.
 - Max **2,048 characters** per `from` and `to`
 - Paths cannot contain whitespace or quotes
+
+The 16-chunk ceiling comes from the Gateway API specification (max 16 filters per
+route) and **cannot be raised** — not per app, not on request. A deploy that would
+exceed it fails with an explicit error naming your entry count; it never ships a
+partial redirect list.
+
+**Do not build around the ceiling.** It is a platform limit, not a starting point to
+design around. Splitting one site's redirect list across several apps to get more
+capacity is **not a supported configuration** — if such a setup misbehaves, we cannot
+help you debug it. If you are approaching the limit, talk to us first.
+
+The usual way to shrink a list is to stop enumerating. Entries that share a shape — a
+whole retired category tree, a locale prefix — normally collapse into a single pattern
+rewrite in `.base/nginx.yaml`, which costs no chunk budget at all. See
+[Coexistence](#coexistence).
 
 ### Performance
 
@@ -172,15 +190,28 @@ from,to,status
 
 Very large lists are automatically split into multiple proxy-config chunks under the hood. You don't need to think about it — both small and large lists activate simultaneously on deploy.
 
-Typical output:
+A chunk holds 7,500-10,000 entries depending on URL length. Typical output:
 
-- 40k redirects → 2 chunks
-- 160k redirects → 8 chunks
-- Upper bound: 16 chunks per app
+- 40k redirects → 4-6 chunks
+- 100k redirects → 10-14 chunks
+- ~120k redirects → at or near the 16-chunk ceiling with typical URLs
 
 ### Rollback
 
 Remove or empty the file and deploy. Stale entries are cleaned up automatically.
+
+### Redirects and domains
+
+Redirects apply to the domains an app serves **as of its last deploy**. Adding a
+domain to an app, or moving a domain between apps, does not activate redirects on
+that domain by itself — **deploy the app that now owns the domain.**
+
+Until you do, requests to that domain reach your application directly and your
+redirects do not fire. Nothing errors; the redirects are simply absent.
+
+This comes up whenever an app's set of domains changes — a new market domain, a domain
+handed over from another app. After adding `stage.example.dk` to `myapp`, deploy
+`myapp`.
 
 ### Coexistence
 
