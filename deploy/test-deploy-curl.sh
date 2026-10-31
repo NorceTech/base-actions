@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # test-deploy-curl.sh — Tests for deploy.sh curl error-handling
 #
-# Three scenarios:
+# Four scenarios:
 #   1. Mechanism: verifies || captures exit codes under set -euo pipefail
 #      (covers exit 28 / timeout without needing a real 180s wait)
 #   2. Connection refused (exit 7): deploy.sh exits 1 with friendly error box
 #   3. Success (HTTP 200): deploy.sh exits 0 and sets deploy_success=true
+#   4. false booleans in config.yaml are sent, not dropped
 #
 # Usage: bash deploy/test-deploy-curl.sh
 # Exit:  0 if all pass, 1 if any fail.
@@ -209,6 +210,101 @@ assert_file_contains "namespace set in GITHUB_OUTPUT" "namespace=partnersense-te
 assert_file_contains "success message printed" "Deploy submitted" "$DEPLOY_OUT"
 
 rm -f "$GH_OUT" "$DEPLOY_OUT"
+
+# ──────────────────────────────────────────────────────────────────────
+# SCENARIO 4: Integration — false booleans in config.yaml reach the API
+#
+# `is_private: false`, `vpn_only: false` and `force_https: false` must be sent
+# as false, not left out: left out, the backend keeps the portal value, so an
+# environment that was switched on could never be switched off from
+# config.yaml. They were read with `// empty`, which drops false as well as
+# null. The mock server saves the request body so the test can look at it.
+#
+# Needs a YAML parser (yq, or python3 with PyYAML), like deploy.sh itself.
+# ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "Scenario 4: false booleans in config.yaml are sent to the API"
+
+if ! command -v yq &> /dev/null && ! python3 -c "import yaml" 2>/dev/null; then
+  echo "  ⏭️  skipped: no YAML parser (yq or PyYAML) on this machine"
+else
+  WORK4=$(mktemp -d)
+  BODY_OUT="$WORK4/body.json"
+
+  cat > "$WORK4/config.yaml" <<'YAMLEOF'
+environments:
+  test:
+    is_private: false
+    vpn_only: true
+    force_https: false
+  prod:
+    vpn_only: false
+YAMLEOF
+
+  MOCK4_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); p=s.getsockname()[1]; s.close(); print(p)")
+
+  python3 - "$MOCK4_PORT" "$BODY_OUT" <<'PYEOF' &
+import http.server, json, sys
+
+PORT = int(sys.argv[1])
+BODY_OUT = sys.argv[2]
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_len = int(self.headers.get('Content-Length', 0))
+        with open(BODY_OUT, 'wb') as f:
+            f.write(self.rfile.read(content_len))
+        resp = json.dumps({
+            'data': {
+                'success': True,
+                'namespace': 'partnersense-test-app-test',
+                'message': 'Deployed'
+            }
+        }).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(resp)))
+        self.end_headers()
+        self.wfile.write(resp)
+    def log_message(self, fmt, *args): pass
+
+server = http.server.HTTPServer(('127.0.0.1', PORT), Handler)
+server.serve_forever()
+PYEOF
+  MOCK4_PID=$!
+  trap 'kill "$MOCK_PID" "$MOCK4_PID" 2>/dev/null || true; rm -rf "$WORK4"' EXIT
+  sleep 0.3
+
+  # deploy_with ENVIRONMENT — runs deploy.sh against the fixture config and
+  # prints the request body it sent.
+  deploy_with() {
+    rm -f "$BODY_OUT"
+    env -i \
+      HOME="$HOME" \
+      PATH="$PATH" \
+      APP=test-app \
+      ENVIRONMENT="$1" \
+      IMAGE_TAG=sha-abc123 \
+      COMMIT_SHA=abc123 \
+      CONFIG_FILE="$WORK4/config.yaml" \
+      API_URL="http://127.0.0.1:${MOCK4_PORT}" \
+      API_KEY=test-key \
+      GITHUB_OUTPUT=/dev/null \
+      ENABLE_HEALTH_PROBE=false \
+      USE_NOPROXY=false \
+      bash "$DEPLOY_SH" > "$WORK4/deploy.out" 2>&1 || true
+    cat "$BODY_OUT" 2>/dev/null || echo '{}'
+  }
+
+  BODY=$(deploy_with test)
+  assert_contains "is_private: false is sent" "false" "$(echo "$BODY" | jq -c '.is_private')"
+  assert_contains "vpn_only: true is sent" "true" "$(echo "$BODY" | jq -c '.vpn_only')"
+  assert_contains "force_https: false is sent" "false" "$(echo "$BODY" | jq -c '.force_https')"
+
+  BODY=$(deploy_with prod)
+  assert_contains "vpn_only: false is sent" "false" "$(echo "$BODY" | jq -c '.vpn_only')"
+  assert_contains "unset is_private is left out" "false" "$(echo "$BODY" | jq -c 'has("is_private")')"
+fi
 
 # ──────────────────────────────────────────────────────────────────────
 # Summary

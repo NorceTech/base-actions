@@ -470,7 +470,10 @@ rm -f "$REDIRECTS_TMP"
 # a silent no-op — the backend would fall back to the DB value, so an env that was
 # flipped to private in the portal could not be flipped back via config.yaml.
 # Now we forward both values whenever the field is present.
-IS_PRIVATE=$(echo "$CONFIG" | jq -r '.is_private // empty' 2>/dev/null || echo "")
+# The null check is explicit because `.is_private // empty` is not enough: jq's
+# `//` treats false like null, so it dropped `false` and the no-op came back.
+# The same goes for vpn_only and force_https below.
+IS_PRIVATE=$(echo "$CONFIG" | jq -r 'if .is_private == null then empty else .is_private end' 2>/dev/null || echo "")
 if [ "$IS_PRIVATE" = "true" ]; then
   jq '. + {is_private: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 elif [ "$IS_PRIVATE" = "false" ]; then
@@ -482,7 +485,7 @@ fi
 # toggled either direction from config.yaml. The backend rejects vpn_only=true
 # (409) on partners that don't have an internal Gateway provisioned, and (400)
 # when vpn_only and is_private are both true.
-VPN_ONLY=$(echo "$CONFIG" | jq -r '.vpn_only // empty' 2>/dev/null || echo "")
+VPN_ONLY=$(echo "$CONFIG" | jq -r 'if .vpn_only == null then empty else .vpn_only end' 2>/dev/null || echo "")
 if [ "$VPN_ONLY" = "true" ]; then
   jq '. + {vpn_only: true}' "$BODY_FILE" > "${BODY_FILE}.tmp" && mv "${BODY_FILE}.tmp" "$BODY_FILE"
 elif [ "$VPN_ONLY" = "false" ]; then
@@ -492,7 +495,7 @@ fi
 # Forward force_https the same way, and for the same reason: forwarding only
 # `true` would make `force_https: false` a silent no-op, so an environment
 # switched on in the portal could never be switched off from config.yaml.
-FORCE_HTTPS=$(echo "$CONFIG" | jq -r '.force_https // empty' 2>/dev/null || echo "")
+FORCE_HTTPS=$(echo "$CONFIG" | jq -r 'if .force_https == null then empty else .force_https end' 2>/dev/null || echo "")
 if [ -n "${FORCE_HTTPS_INPUT:-}" ]; then
   # Workflow input wins over config.yaml, so a pipeline can override per run.
   # Validated like auto_promote above: without this, `force_https: yes` would
